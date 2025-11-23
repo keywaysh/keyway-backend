@@ -6,7 +6,7 @@ import {
 } from '../types';
 import { db, users, vaults, secrets } from '../db';
 import { eq, and } from 'drizzle-orm';
-import { getUserFromToken, hasRepoAccess } from '../utils/github';
+import { getUserFromToken, hasRepoAccess, hasAdminAccess } from '../utils/github';
 import { encrypt, decrypt, sanitizeForLogging } from '../utils/encryption';
 import { trackEvent, AnalyticsEvents } from '../utils/analytics';
 
@@ -15,20 +15,20 @@ export async function vaultRoutes(fastify: FastifyInstance) {
    * POST /vaults/init
    * Initialize a new vault for a repository
    */
-  fastify.post('/vaults/init', async (request, reply) => {
+  fastify.post('/init', async (request, reply) => {
     try {
       const body = InitVaultRequestSchema.parse(request.body);
 
       // Verify GitHub token and get user
       const githubUser = await getUserFromToken(body.accessToken);
 
-      // Check if user has access to the repository
-      const hasAccess = await hasRepoAccess(body.accessToken, body.repoFullName);
+      // Check if user has admin access to the repository (required for init)
+      const isAdmin = await hasAdminAccess(body.accessToken, body.repoFullName);
 
-      if (!hasAccess) {
+      if (!isAdmin) {
         return reply.status(403).send({
           error: 'ForbiddenError',
-          message: 'You do not have access to this repository',
+          message: 'Only repository admins can initialize vaults',
         });
       }
 
@@ -109,7 +109,7 @@ export async function vaultRoutes(fastify: FastifyInstance) {
    * POST /vaults/:repo/:env/push
    * Push secrets to a vault environment
    */
-  fastify.post('/vaults/:repo/:env/push', async (request, reply) => {
+  fastify.post('/:repo/:env/push', async (request, reply) => {
     try {
       const params = request.params as { repo: string; env: string };
       const repoFullName = decodeURIComponent(params.repo);
@@ -226,7 +226,7 @@ export async function vaultRoutes(fastify: FastifyInstance) {
    * GET /vaults/:repo/:env/pull
    * Pull secrets from a vault environment
    */
-  fastify.get('/vaults/:repo/:env/pull', async (request, reply) => {
+  fastify.get('/:repo/:env/pull', async (request, reply) => {
     try {
       const params = request.params as { repo: string; env: string };
       const query = request.query as { accessToken?: string };

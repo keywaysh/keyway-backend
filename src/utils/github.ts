@@ -100,6 +100,32 @@ export async function hasRepoAccess(
 }
 
 /**
+ * Check if user has admin access to a repository
+ */
+export async function hasAdminAccess(
+  accessToken: string,
+  repoFullName: string
+): Promise<boolean> {
+  const [owner, repo] = repoFullName.split('/');
+
+  const repoResponse = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${repo}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/vnd.github.v3+json',
+    },
+  });
+
+  if (!repoResponse.ok) {
+    return false;
+  }
+
+  const repoData = await repoResponse.json() as GitHubRepo;
+
+  // Only admin can initialize vaults
+  return repoData.permissions?.admin === true;
+}
+
+/**
  * Get GitHub user from access token
  */
 export async function getUserFromToken(accessToken: string) {

@@ -1,5 +1,13 @@
-import { pgTable, text, integer, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { pgTable, text, integer, timestamp, uuid, pgEnum } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
+
+// Device flow status enum
+export const deviceCodeStatusEnum = pgEnum('device_code_status', [
+  'pending',
+  'approved',
+  'denied',
+  'expired',
+]);
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -31,9 +39,20 @@ export const secrets = pgTable('secrets', {
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
+export const deviceCodes = pgTable('device_codes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  deviceCode: text('device_code').notNull().unique(),
+  userCode: text('user_code').notNull().unique(),
+  status: deviceCodeStatusEnum('status').notNull().default('pending'),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   vaults: many(vaults),
+  deviceCodes: many(deviceCodes),
 }));
 
 export const vaultsRelations = relations(vaults, ({ one, many }) => ({
@@ -51,9 +70,18 @@ export const secretsRelations = relations(secrets, ({ one }) => ({
   }),
 }));
 
+export const deviceCodesRelations = relations(deviceCodes, ({ one }) => ({
+  user: one(users, {
+    fields: [deviceCodes.userId],
+    references: [users.id],
+  }),
+}));
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Vault = typeof vaults.$inferSelect;
 export type NewVault = typeof vaults.$inferInsert;
 export type Secret = typeof secrets.$inferSelect;
 export type NewSecret = typeof secrets.$inferInsert;
+export type DeviceCode = typeof deviceCodes.$inferSelect;
+export type NewDeviceCode = typeof deviceCodes.$inferInsert;

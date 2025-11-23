@@ -1,6 +1,9 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { UnauthorizedError, ForbiddenError } from '../errors';
 import { getUserFromToken, hasRepoAccess, hasAdminAccess } from '../utils/github';
+import { verifyKeywayToken } from '../utils/jwt';
+import { db, users } from '../db';
+import { eq } from 'drizzle-orm';
 
 // Extend Fastify request type
 declare module 'fastify' {
@@ -17,6 +20,7 @@ declare module 'fastify' {
 
 /**
  * Extract and validate Authorization header
+ * Supports both GitHub access tokens and Keyway JWT tokens
  */
 export async function authenticateGitHub(
   request: FastifyRequest,
@@ -32,18 +36,54 @@ export async function authenticateGitHub(
     throw new UnauthorizedError('Authorization header must use Bearer scheme');
   }
 
-  const accessToken = authHeader.substring(7);
+  const token = authHeader.substring(7);
 
-  if (!accessToken) {
+  if (!token) {
     throw new UnauthorizedError('Access token is required');
   }
 
-  // Verify token and get user info
-  const githubUser = await getUserFromToken(accessToken);
+  // Try to verify as Keyway JWT token first
+  try {
+    const payload = verifyKeywayToken(token);
 
-  // Attach to request for use in route handlers
-  request.accessToken = accessToken;
-  request.githubUser = githubUser;
+    // Get user from database using userId from JWT
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, payload.userId),
+    });
+
+    if (!user) {
+      throw new UnauthorizedError('User not found');
+    }
+
+    // Attach to request for use in route handlers
+    // Use the GitHub access token stored in DB for API calls
+    request.accessToken = user.accessToken;
+    request.githubUser = {
+      githubId: user.githubId,
+      username: user.username,
+      email: user.email,
+      avatarUrl: user.avatarUrl,
+    };
+
+    return;
+  } catch (error) {
+    // If not a valid JWT, try as GitHub access token
+    if (error instanceof Error && error.message.includes('Token')) {
+      // Token is invalid JWT, try as GitHub token
+      try {
+        const githubUser = await getUserFromToken(token);
+
+        // Attach to request for use in route handlers
+        request.accessToken = token;
+        request.githubUser = githubUser;
+        return;
+      } catch (githubError) {
+        throw new UnauthorizedError('Invalid access token');
+      }
+    }
+
+    throw error;
+  }
 }
 
 /**

@@ -21,6 +21,9 @@ const envSchema = z.object({
     .length(64, 'ENCRYPTION_KEY must be 64 hex characters (32 bytes)')
     .regex(/^[0-9a-f]+$/i, 'ENCRYPTION_KEY must be hexadecimal'),
 
+  // JWT for Keyway tokens
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
+
   // GitHub OAuth
   GITHUB_CLIENT_ID: z.string().min(1, 'GITHUB_CLIENT_ID is required'),
   GITHUB_CLIENT_SECRET: z.string().min(1, 'GITHUB_CLIENT_SECRET is required'),
@@ -69,6 +72,11 @@ export const config = {
     algorithm: 'aes-256-gcm' as const,
     ivLength: 16,
     authTagLength: 16,
+  },
+
+  jwt: {
+    secret: env.JWT_SECRET,
+    expiresIn: '30d', // 30 days for device flow tokens
   },
 
   github: {

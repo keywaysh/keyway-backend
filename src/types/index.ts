@@ -93,6 +93,56 @@ export const GitHubCallbackResponseSchema = z.object({
 
 export type GitHubCallbackResponse = z.infer<typeof GitHubCallbackResponseSchema>;
 
+// Device Flow schemas
+export const DeviceFlowStartResponseSchema = z.object({
+  deviceCode: z.string(),
+  userCode: z.string(),
+  verificationUri: z.string(),
+  verificationUriComplete: z.string(),
+  expiresIn: z.number(),
+  interval: z.number(),
+});
+
+export type DeviceFlowStartResponse = z.infer<typeof DeviceFlowStartResponseSchema>;
+
+export const DeviceFlowPollRequestSchema = z.object({
+  deviceCode: z.string(),
+});
+
+export type DeviceFlowPollRequest = z.infer<typeof DeviceFlowPollRequestSchema>;
+
+export const DeviceFlowPollResponsePendingSchema = z.object({
+  status: z.literal('pending'),
+});
+
+export const DeviceFlowPollResponseApprovedSchema = z.object({
+  status: z.literal('approved'),
+  keywayToken: z.string(),
+  githubLogin: z.string(),
+  expiresAt: z.string(),
+});
+
+export const DeviceFlowPollResponseExpiredSchema = z.object({
+  status: z.literal('expired'),
+  message: z.string(),
+});
+
+export const DeviceFlowPollResponseDeniedSchema = z.object({
+  status: z.literal('denied'),
+  message: z.string(),
+});
+
+export type DeviceFlowPollResponsePending = z.infer<typeof DeviceFlowPollResponsePendingSchema>;
+export type DeviceFlowPollResponseApproved = z.infer<typeof DeviceFlowPollResponseApprovedSchema>;
+export type DeviceFlowPollResponseExpired = z.infer<typeof DeviceFlowPollResponseExpiredSchema>;
+export type DeviceFlowPollResponseDenied = z.infer<typeof DeviceFlowPollResponseDeniedSchema>;
+
+export type DeviceFlowPollResponse =
+  | DeviceFlowPollResponsePending
+  | DeviceFlowPollResponseApproved
+  | DeviceFlowPollResponseExpired
+  | DeviceFlowPollResponseDenied;
+
 // Error response
 export const ErrorResponseSchema = z.object({
   error: z.string(),

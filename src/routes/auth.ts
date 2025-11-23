@@ -135,7 +135,9 @@ export async function authRoutes(fastify: FastifyInstance) {
     const query = request.query as { user_code?: string };
     const userCode = query.user_code || '';
 
-    // Simple HTML page for device verification
+    // Auto-submit if code is provided
+    const autoSubmit = userCode.length === 9; // Format: XXXX-XXXX
+
     const html = `
 <!DOCTYPE html>
 <html lang="en">
@@ -164,6 +166,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
     h1 { font-size: 28px; margin-bottom: 12px; color: #1a202c; }
     p { color: #4a5568; margin-bottom: 24px; line-height: 1.6; }
+    .info { background: #bee3f8; color: #2c5282; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
     form { display: flex; flex-direction: column; gap: 16px; }
     input {
       padding: 12px 16px;
@@ -186,32 +189,82 @@ export async function authRoutes(fastify: FastifyInstance) {
       font-weight: 600;
       cursor: pointer;
       transition: background 0.2s;
+      position: relative;
     }
     button:hover { background: #5568d3; }
+    button:disabled { background: #a0aec0; cursor: not-allowed; }
+    button.loading::after {
+      content: '';
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 16px;
+      border: 2px solid white;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: translateY(-50%) rotate(360deg); }
+    }
     .logo { font-size: 48px; text-align: center; margin-bottom: 20px; }
-    .error { background: #fed7d7; color: #c53030; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
+    .countdown { font-size: 12px; color: #718096; margin-top: 8px; text-align: center; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="logo">🔐</div>
     <h1>Verify Your Device</h1>
-    <p>Enter the code displayed on your device to continue with GitHub authentication.</p>
+    ${autoSubmit
+      ? '<p>Code detected! Redirecting to GitHub authentication...</p><div class="info">✅ Code <strong>' + userCode + '</strong> confirmed</div>'
+      : '<p>Enter the code displayed on your device to continue with GitHub authentication.</p>'
+    }
 
-    <form action="/auth/device/verify" method="POST">
+    <form id="verifyForm" action="/auth/device/verify" method="POST">
       <input
         type="text"
         name="user_code"
+        id="userCodeInput"
         placeholder="XXXX-XXXX"
         value="${userCode}"
         pattern="[A-Z0-9]{4}-[A-Z0-9]{4}"
         maxlength="9"
         required
-        autofocus
+        ${autoSubmit ? 'readonly' : 'autofocus'}
       />
-      <button type="submit">Continue with GitHub</button>
+      <button type="submit" id="submitBtn"${autoSubmit ? ' class="loading" disabled' : ''}>
+        ${autoSubmit ? 'Redirecting...' : 'Continue with GitHub'}
+      </button>
     </form>
+    ${autoSubmit ? '<div class="countdown" id="countdown">Redirecting in <span id="timer">2</span> seconds...</div>' : ''}
   </div>
+
+  ${autoSubmit ? `
+  <script>
+    // Auto-submit after 2 seconds if code is pre-filled
+    let timeLeft = 2;
+    const timerEl = document.getElementById('timer');
+    const countdownEl = document.getElementById('countdown');
+
+    const countdown = setInterval(() => {
+      timeLeft--;
+      if (timerEl) timerEl.textContent = timeLeft;
+
+      if (timeLeft <= 0) {
+        clearInterval(countdown);
+        document.getElementById('verifyForm').submit();
+      }
+    }, 1000);
+
+    // Allow manual submission
+    document.getElementById('verifyForm').addEventListener('submit', () => {
+      clearInterval(countdown);
+      if (countdownEl) countdownEl.textContent = 'Redirecting...';
+    });
+  </script>
+  ` : ''}
 </body>
 </html>
     `;

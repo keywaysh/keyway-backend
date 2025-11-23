@@ -30,7 +30,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       expiresAt,
     });
 
-    const verificationUri = `${config.server.isDevelopment ? 'http' : 'https'}://${request.hostname}/auth/device/verify`;
+    // Detect protocol from request (Railway uses X-Forwarded-Proto)
+    const protocol = request.headers['x-forwarded-proto'] || (config.server.isDevelopment ? 'http' : 'https');
+    const verificationUri = `${protocol}://${request.hostname}/auth/device/verify`;
     const verificationUriComplete = `${verificationUri}?user_code=${userCode}`;
 
     fastify.log.info({
@@ -378,7 +380,8 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     // Build GitHub OAuth URL with state containing the device code ID
     const state = Buffer.from(JSON.stringify({ deviceCodeId: deviceCodeRecord.id })).toString('base64');
-    const redirectUri = `${config.server.isDevelopment ? 'http' : 'https'}://${request.hostname}/auth/device/callback`;
+    const protocol = request.headers['x-forwarded-proto'] || (config.server.isDevelopment ? 'http' : 'https');
+    const redirectUri = `${protocol}://${request.hostname}/auth/device/callback`;
 
     const githubAuthUrl = new URL('https://github.com/login/oauth/authorize');
     githubAuthUrl.searchParams.set('client_id', config.github.clientId);

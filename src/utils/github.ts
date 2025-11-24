@@ -19,7 +19,11 @@ interface GitHubTokenResponse {
 }
 
 interface GitHubRepo {
+  owner?: {
+    login: string;
+  };
   permissions?: {
+    pull?: boolean;
     push?: boolean;
     admin?: boolean;
   };
@@ -148,33 +152,75 @@ export async function getUserRole(
 ): Promise<CollaboratorRole | null> {
   const [owner, repo] = repoFullName.split('/');
 
-  const response = await fetch(
-    `${GITHUB_API_BASE}/repos/${owner}/${repo}/collaborators/${username}`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/vnd.github.v3+json',
-      },
-    }
-  );
+  try {
+    // First, get basic repo info and permissions
+    const repoResponse = await fetch(
+      `${GITHUB_API_BASE}/repos/${owner}/${repo}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      }
+    );
 
-  if (!response.ok) {
-    // User is not a collaborator or doesn't have access
+    if (!repoResponse.ok) {
+      return null;
+    }
+
+    const repoData = (await repoResponse.json()) as GitHubRepo;
+
+    // Check if user is the repository owner (for personal repos)
+    // Owners have admin access but don't appear in the collaborators list
+    if (repoData.owner?.login === username) {
+      return 'admin';
+    }
+
+    // If they have admin permission via the basic permissions check
+    if (repoData.permissions?.admin === true) {
+      return 'admin';
+    }
+
+    // Try to get detailed collaborator role (for orgs and invited collaborators)
+    const collabResponse = await fetch(
+      `${GITHUB_API_BASE}/repos/${owner}/${repo}/collaborators/${username}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      }
+    );
+
+    if (collabResponse.ok) {
+      const data = (await collabResponse.json()) as GitHubCollaborator;
+
+      // Map GitHub's role_name to our CollaboratorRole type
+      const roleMap: Record<string, CollaboratorRole> = {
+        pull: 'read',
+        triage: 'triage',
+        push: 'write',
+        maintain: 'maintain',
+        admin: 'admin',
+      };
+
+      return roleMap[data.role_name] || null;
+    }
+
+    // Fall back to basic permissions if collaborator API doesn't work
+    if (repoData.permissions?.push === true) {
+      return 'write';
+    }
+    if (repoData.permissions?.pull === true) {
+      return 'read';
+    }
+
+    return null;
+  } catch (error) {
+    // If API call fails or JSON parsing fails, return null
+    console.error('Failed to get collaborator role:', error);
     return null;
   }
-
-  const data = (await response.json()) as GitHubCollaborator;
-
-  // Map GitHub's role_name to our CollaboratorRole type
-  const roleMap: Record<string, CollaboratorRole> = {
-    pull: 'read',
-    triage: 'triage',
-    push: 'write',
-    maintain: 'maintain',
-    admin: 'admin',
-  };
-
-  return roleMap[data.role_name] || null;
 }
 
 /**

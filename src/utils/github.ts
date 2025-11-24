@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { config } from '../config';
 import { UnauthorizedError, ForbiddenError } from '../errors';
+import type { CollaboratorRole } from '../db/schema';
 
 const GITHUB_API_BASE = config.github.apiBaseUrl;
 
@@ -21,6 +22,15 @@ interface GitHubRepo {
   permissions?: {
     push?: boolean;
     admin?: boolean;
+  };
+}
+
+interface GitHubCollaborator {
+  role_name: 'pull' | 'triage' | 'push' | 'maintain' | 'admin';
+  permissions: {
+    pull: boolean;
+    push: boolean;
+    admin: boolean;
   };
 }
 
@@ -125,6 +135,46 @@ export async function hasAdminAccess(
 
   // Only admin can initialize vaults
   return repoData.permissions?.admin === true;
+}
+
+/**
+ * Get user's collaborator role for a repository
+ * Returns one of: read, triage, write, maintain, admin
+ */
+export async function getUserRole(
+  accessToken: string,
+  repoFullName: string,
+  username: string
+): Promise<CollaboratorRole | null> {
+  const [owner, repo] = repoFullName.split('/');
+
+  const response = await fetch(
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/collaborators/${username}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    }
+  );
+
+  if (!response.ok) {
+    // User is not a collaborator or doesn't have access
+    return null;
+  }
+
+  const data = (await response.json()) as GitHubCollaborator;
+
+  // Map GitHub's role_name to our CollaboratorRole type
+  const roleMap: Record<string, CollaboratorRole> = {
+    pull: 'read',
+    triage: 'triage',
+    push: 'write',
+    maintain: 'maintain',
+    admin: 'admin',
+  };
+
+  return roleMap[data.role_name] || null;
 }
 
 /**

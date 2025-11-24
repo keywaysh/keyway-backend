@@ -1,9 +1,11 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { UnauthorizedError, ForbiddenError } from '../errors';
-import { getUserFromToken, hasRepoAccess, hasAdminAccess } from '../utils/github';
+import { getUserFromToken, hasRepoAccess, hasAdminAccess, getUserRole } from '../utils/github';
 import { verifyKeywayToken } from '../utils/jwt';
-import { db, users } from '../db';
+import { db, users, vaults } from '../db';
 import { eq } from 'drizzle-orm';
+import { hasEnvironmentPermission } from '../utils/permissions';
+import type { PermissionType } from '../db/schema';
 
 // Extend Fastify request type
 declare module 'fastify' {
@@ -141,4 +143,69 @@ export async function requireAdminAccess(
   if (!isAdmin) {
     throw new ForbiddenError('Only repository admins can perform this action');
   }
+}
+
+/**
+ * Create middleware factory for environment-based permissions
+ * Requires authenticateGitHub to be called first
+ */
+export function requireEnvironmentAccess(permissionType: PermissionType) {
+  return async function (request: FastifyRequest, reply: FastifyReply) {
+    if (!request.accessToken || !request.githubUser) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    // Get repo and environment from params or body
+    const params = request.params as { repo?: string; env?: string };
+    const body = request.body as { repoFullName?: string; environment?: string };
+
+    const repoFullName = params.repo
+      ? decodeURIComponent(params.repo)
+      : body?.repoFullName;
+
+    const environment = params.env || body?.environment;
+
+    if (!repoFullName) {
+      throw new ForbiddenError('Repository name required');
+    }
+
+    if (!environment) {
+      throw new ForbiddenError('Environment name required');
+    }
+
+    // Get user's role for this repository
+    const userRole = await getUserRole(
+      request.accessToken,
+      repoFullName,
+      request.githubUser.username
+    );
+
+    if (!userRole) {
+      throw new ForbiddenError('You do not have access to this repository');
+    }
+
+    // Get vault for this repository
+    const vault = await db.query.vaults.findFirst({
+      where: eq(vaults.repoFullName, repoFullName),
+    });
+
+    if (!vault) {
+      throw new ForbiddenError('Vault not found for this repository');
+    }
+
+    // Check environment permission
+    const hasPermission = await hasEnvironmentPermission(
+      vault.id,
+      environment,
+      userRole,
+      permissionType
+    );
+
+    if (!hasPermission) {
+      const action = permissionType === 'read' ? 'read from' : 'write to';
+      throw new ForbiddenError(
+        `Your role (${userRole}) does not have permission to ${action} the "${environment}" environment`
+      );
+    }
+  };
 }

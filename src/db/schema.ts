@@ -9,6 +9,21 @@ export const deviceCodeStatusEnum = pgEnum('device_code_status', [
   'expired',
 ]);
 
+// GitHub collaborator roles (5 levels)
+export const collaboratorRoleEnum = pgEnum('collaborator_role', [
+  'read',
+  'triage',
+  'write',
+  'maintain',
+  'admin',
+]);
+
+// Permission types
+export const permissionTypeEnum = pgEnum('permission_type', [
+  'read',
+  'write',
+]);
+
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   githubId: integer('github_id').notNull().unique(),
@@ -50,6 +65,16 @@ export const deviceCodes = pgTable('device_codes', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+export const environmentPermissions = pgTable('environment_permissions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  vaultId: uuid('vault_id').notNull().references(() => vaults.id, { onDelete: 'cascade' }),
+  environment: text('environment').notNull(),
+  permissionType: permissionTypeEnum('permission_type').notNull(),
+  minRole: collaboratorRoleEnum('min_role').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   vaults: many(vaults),
@@ -62,6 +87,7 @@ export const vaultsRelations = relations(vaults, ({ one, many }) => ({
     references: [users.id],
   }),
   secrets: many(secrets),
+  environmentPermissions: many(environmentPermissions),
 }));
 
 export const secretsRelations = relations(secrets, ({ one }) => ({
@@ -78,6 +104,13 @@ export const deviceCodesRelations = relations(deviceCodes, ({ one }) => ({
   }),
 }));
 
+export const environmentPermissionsRelations = relations(environmentPermissions, ({ one }) => ({
+  vault: one(vaults, {
+    fields: [environmentPermissions.vaultId],
+    references: [vaults.id],
+  }),
+}));
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Vault = typeof vaults.$inferSelect;
@@ -86,3 +119,7 @@ export type Secret = typeof secrets.$inferSelect;
 export type NewSecret = typeof secrets.$inferInsert;
 export type DeviceCode = typeof deviceCodes.$inferSelect;
 export type NewDeviceCode = typeof deviceCodes.$inferInsert;
+export type EnvironmentPermission = typeof environmentPermissions.$inferSelect;
+export type NewEnvironmentPermission = typeof environmentPermissions.$inferInsert;
+export type CollaboratorRole = typeof collaboratorRoleEnum.enumValues[number];
+export type PermissionType = typeof permissionTypeEnum.enumValues[number];

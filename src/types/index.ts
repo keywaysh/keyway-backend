@@ -94,6 +94,12 @@ export const GitHubCallbackResponseSchema = z.object({
 export type GitHubCallbackResponse = z.infer<typeof GitHubCallbackResponseSchema>;
 
 // Device Flow schemas
+export const DeviceFlowStartRequestSchema = z.object({
+  repository: z.string().regex(/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+$/).optional(),
+});
+
+export type DeviceFlowStartRequest = z.infer<typeof DeviceFlowStartRequestSchema>;
+
 export const DeviceFlowStartResponseSchema = z.object({
   deviceCode: z.string(),
   userCode: z.string(),

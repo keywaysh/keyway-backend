@@ -15,6 +15,27 @@
       "when": 1763930835560,
       "tag": "0001_dusty_lifeguard",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1763940864423,
+      "tag": "0002_loose_angel",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1763941035343,
+      "tag": "0003_worried_mauler",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1763942419725,
+      "tag": "0004_pink_dakota_north",
+      "breakpoints": true
     }
   ]
 }

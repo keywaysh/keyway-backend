@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import {
   GitHubCallbackRequestSchema,
   DeviceFlowPollRequestSchema,
+  DeviceFlowStartRequestSchema,
 } from '../types';
 import { db, users, deviceCodes } from '../db';
 import { eq } from 'drizzle-orm';
@@ -11,6 +12,7 @@ import { generateDeviceCode, generateUserCode, DEVICE_FLOW_CONFIG } from '../uti
 import { generateKeywayToken, getTokenExpiresAt } from '../utils/jwt';
 import { config } from '../config';
 import { NotFoundError } from '../errors';
+import { authenticateGitHub } from '../middleware/auth';
 
 export async function authRoutes(fastify: FastifyInstance) {
   /**
@@ -18,15 +20,18 @@ export async function authRoutes(fastify: FastifyInstance) {
    * Start the device authorization flow
    */
   fastify.post('/device/start', async (request, reply) => {
+    const body = DeviceFlowStartRequestSchema.parse(request.body);
+
     const deviceCode = generateDeviceCode();
     const userCode = generateUserCode();
     const expiresAt = new Date(Date.now() + DEVICE_FLOW_CONFIG.EXPIRES_IN * 1000);
 
-    // Store device code in database
+    // Store device code in database with optional suggested repository
     await db.insert(deviceCodes).values({
       deviceCode,
       userCode,
       status: 'pending',
+      suggestedRepository: body.repository,
       expiresAt,
     });
 
@@ -38,6 +43,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     fastify.log.info({
       deviceCode: deviceCode.slice(0, 8) + '...',
       userCode,
+      suggestedRepository: body.repository,
     }, 'Device flow started');
 
     return {
@@ -700,5 +706,20 @@ export async function authRoutes(fastify: FastifyInstance) {
         message: 'Failed to authenticate with GitHub',
       });
     }
+  });
+
+  /**
+   * POST /auth/token/validate
+   * Validate a GitHub Personal Access Token (PAT)
+   * Used by CLI when user authenticates with --token flag
+   */
+  fastify.post('/token/validate', {
+    preHandler: [authenticateGitHub],
+  }, async (request, reply) => {
+    // If we reach here, the token is valid (authenticated by middleware)
+    return {
+      username: request.githubUser!.username,
+      githubId: request.githubUser!.githubId,
+    };
   });
 }

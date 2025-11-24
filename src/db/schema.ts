@@ -45,6 +45,7 @@ export const deviceCodes = pgTable('device_codes', {
   userCode: text('user_code').notNull().unique(),
   status: deviceCodeStatusEnum('status').notNull().default('pending'),
   userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  suggestedRepository: text('suggested_repository'), // Optional repo suggested by CLI
   expiresAt: timestamp('expires_at').notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });

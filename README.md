@@ -7,10 +7,11 @@ A simple, secure API for managing team secrets with GitHub authentication and AE
 ## Features
 
 - **🔐 Secure**: AES-256-GCM encryption for all secrets
-- **👥 GitHub OAuth**: Authentication and authorization via GitHub
+- **👥 GitHub Auth**: OAuth Device Flow + Fine-grained PAT support
 - **🗄️ PostgreSQL**: Reliable storage with Drizzle ORM
 - **📊 Analytics**: Privacy-first PostHog integration
-- **🚀 Production-ready**: Fastify server, TypeScript, strict validation
+- **🚀 Production-ready**: Fastify 5, TypeScript, strict validation
+- **🔒 Privacy-first**: Metadata-only access, no code reading
 
 ## Project Structure
 
@@ -142,27 +143,62 @@ GET /health
 
 ### Authentication
 
-#### `POST /auth/github/callback`
+#### OAuth Device Flow
 
-Exchange GitHub OAuth code for access token.
+**POST /auth/device/start** - Start device authorization
 
-**Request:**
+Request:
 ```json
 {
-  "code": "github_oauth_code"
+  "repository": "owner/repo"  // optional, suggested repo from CLI
 }
 ```
 
-**Response:**
+Response:
 ```json
 {
-  "accessToken": "gho_...",
-  "user": {
-    "id": 12345,
-    "username": "johndoe",
-    "email": "john@example.com",
-    "avatarUrl": "https://..."
-  }
+  "deviceCode": "abc123...",
+  "userCode": "ABCD-1234",
+  "verificationUri": "https://your-api.com/auth/device/verify",
+  "verificationUriComplete": "https://your-api.com/auth/device/verify?user_code=ABCD-1234",
+  "expiresIn": 900,
+  "interval": 5
+}
+```
+
+**POST /auth/device/poll** - Poll for authorization status
+
+Request:
+```json
+{
+  "deviceCode": "abc123..."
+}
+```
+
+Response (approved):
+```json
+{
+  "status": "approved",
+  "keywayToken": "eyJhbGc...",
+  "githubLogin": "johndoe",
+  "expiresAt": "2025-02-23T..."
+}
+```
+
+#### Fine-grained PAT
+
+**POST /auth/token/validate** - Validate Personal Access Token
+
+Headers:
+```
+Authorization: Bearer github_pat_...
+```
+
+Response:
+```json
+{
+  "username": "johndoe",
+  "githubId": 12345
 }
 ```
 
@@ -244,41 +280,30 @@ npm run db:migrate
 
 ## Deployment
 
-### Railway (Recommended)
+### Railway
 
-**See [DEPLOYMENT_RAILWAY.md](./DEPLOYMENT_RAILWAY.md) for detailed instructions.**
+**See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment guide.**
 
 Quick steps:
 
-1. Push to GitHub
-2. Create new project on Railway.app
-3. Add PostgreSQL database
-4. Configure environment variables
-5. Deploy automatically
+1. Create GitHub OAuth App
+2. Push code to GitHub
+3. Create new project on Railway.app
+4. Add PostgreSQL database
+5. Configure environment variables (see below)
+6. Railway auto-deploys on push to main
 
-### Fly.io
-
+**Always run before pushing:**
 ```bash
-# Install Fly CLI
-curl -L https://fly.io/install.sh | sh
-
-# Login
-fly auth login
-
-# Launch app
-fly launch --name keyway-api
-
-# Set secrets
-fly secrets set \
-  DATABASE_URL="..." \
-  ENCRYPTION_KEY="..." \
-  GITHUB_CLIENT_ID="..." \
-  GITHUB_CLIENT_SECRET="..." \
-  POSTHOG_API_KEY="..."
-
-# Deploy
-fly deploy
+pnpm run validate  # Type check + build + env validation
 ```
+
+Railway will automatically:
+- Run migrations (`pnpm run db:migrate`)
+- Build the app (`pnpm build`)
+- Start the server (`node dist/index.js`)
+- Health check on `/health`
+- Rollback if deployment fails
 
 ## Security
 
@@ -291,9 +316,12 @@ fly deploy
 
 ### Access Control
 
-- **Authentication**: GitHub OAuth
-- **Authorization**: GitHub repository collaborator/admin check
-- **Tokens**: GitHub Personal Access Tokens with `repo` scope
+- **Authentication**: OAuth Device Flow or Fine-grained PAT
+- **Authorization**: GitHub repository collaborator/admin check via API
+- **Tokens**:
+  - OAuth tokens (30-day Keyway JWT + GitHub access token)
+  - Fine-grained PATs (user-controlled scope and expiration)
+- **Privacy**: Only metadata access, never reads repository code
 
 ### Logging
 

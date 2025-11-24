@@ -219,6 +219,56 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
     .logo { font-size: 48px; text-align: center; margin-bottom: 20px; }
     .countdown { font-size: 12px; color: #718096; margin-top: 8px; text-align: center; }
+    .permissions {
+      background: #f7fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+    .permissions h3 {
+      font-size: 16px;
+      margin-bottom: 12px;
+      color: #2d3748;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .permissions ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .permissions li {
+      padding: 6px 0;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .permissions .yes { color: #38a169; font-weight: 600; }
+    .permissions .no { color: #e53e3e; font-weight: 600; }
+    details {
+      margin-top: 12px;
+      cursor: pointer;
+    }
+    summary {
+      color: #667eea;
+      font-weight: 500;
+      user-select: none;
+    }
+    summary:hover { text-decoration: underline; }
+    details p {
+      margin: 8px 0 0 0;
+      font-size: 13px;
+      color: #4a5568;
+      line-height: 1.5;
+    }
+    details a {
+      color: #667eea;
+      text-decoration: none;
+    }
+    details a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -229,6 +279,21 @@ export async function authRoutes(fastify: FastifyInstance) {
       ? '<p>Code detected! Redirecting to GitHub authentication...</p><div class="info">✅ Code <strong>' + userCode + '</strong> confirmed</div>'
       : '<p>Enter the code displayed on your device to continue with GitHub authentication.</p>'
     }
+
+    <div class="permissions">
+      <h3>🔒 What Keyway will access</h3>
+      <ul>
+        <li><span class="yes">✓</span> Check if you have admin/push access to repositories</li>
+        <li><span class="yes">✓</span> Your GitHub username and email</li>
+        <li><span class="no">✗</span> NEVER reads your repository code</li>
+        <li><span class="no">✗</span> NEVER reads issues or pull requests</li>
+      </ul>
+      <details>
+        <summary>Why does Keyway need the "repo" scope?</summary>
+        <p>GitHub's OAuth system doesn't have a "metadata only" scope. The <code>repo</code> scope is required to check repository permissions via the GitHub API.</p>
+        <p><strong>Keyway only uses this to verify you're a collaborator.</strong> We never call endpoints that access your code, issues, or PRs.</p>
+      </details>
+    </div>
 
     <form id="verifyForm" action="/auth/device/verify" method="POST">
       <input

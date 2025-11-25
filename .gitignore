@@ -12,4 +12,3 @@ coverage
 *.swp
 *.swo
 *~
-drizzle/*.sql

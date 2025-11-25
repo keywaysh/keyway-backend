@@ -6,9 +6,11 @@ import formbody from '@fastify/formbody';
 import { ZodError } from 'zod';
 import { config } from './config';
 import { AppError } from './errors';
+import { ApiError } from './lib';
 import { authRoutes } from './routes/auth';
 import { vaultRoutes } from './routes/vaults';
 import { apiRoutes } from './routes/api';
+import { apiV1Routes } from './api/v1';
 import { initAnalytics, shutdownAnalytics, trackEvent, AnalyticsEvents } from './utils/analytics';
 import { sql as dbConnection } from './db';
 
@@ -92,10 +94,13 @@ fastify.get('/health', async (request, reply) => {
   }
 });
 
-// Register routes
+// Register routes (legacy)
 fastify.register(authRoutes, { prefix: '/auth' });
 fastify.register(vaultRoutes, { prefix: '/vaults' });
 fastify.register(apiRoutes, { prefix: '/api' });
+
+// Register API v1 routes
+fastify.register(apiV1Routes, { prefix: '/api/v1' });
 
 // Global error handler
 fastify.setErrorHandler((error: Error & { statusCode?: number; validation?: unknown }, request, reply) => {
@@ -119,7 +124,12 @@ fastify.setErrorHandler((error: Error & { statusCode?: number; validation?: unkn
     }
   );
 
-  // Handle custom application errors
+  // Handle RFC 7807 API errors (new)
+  if (error instanceof ApiError) {
+    return reply.status(error.status).send(error.toProblemDetails(request.id));
+  }
+
+  // Handle custom application errors (legacy)
   if (error instanceof AppError) {
     return reply.status(error.statusCode).send({
       ...error.toJSON(),

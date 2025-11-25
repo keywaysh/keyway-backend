@@ -157,3 +157,131 @@ export const ErrorResponseSchema = z.object({
 });
 
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
+
+// ============================================
+// Dashboard API Types
+// ============================================
+
+// GET /api/me - User profile response
+export const UserProfileResponseSchema = z.object({
+  id: z.string().uuid(),
+  githubId: z.number(),
+  username: z.string(),
+  email: z.string().nullable(),
+  avatarUrl: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export type UserProfileResponse = z.infer<typeof UserProfileResponseSchema>;
+
+// GET /api/vaults - Vault list item
+export const VaultListItemSchema = z.object({
+  id: z.string().uuid(),
+  repoOwner: z.string(),
+  repoName: z.string(),
+  repoAvatar: z.string().nullable(),
+  secretCount: z.number(),
+  environments: z.array(z.string()),
+  updatedAt: z.string(),
+});
+
+export type VaultListItem = z.infer<typeof VaultListItemSchema>;
+
+export const VaultListResponseSchema = z.object({
+  vaults: z.array(VaultListItemSchema),
+  total: z.number(),
+});
+
+export type VaultListResponse = z.infer<typeof VaultListResponseSchema>;
+
+// GET /api/vaults/:vaultId - Single vault metadata
+export const VaultMetadataResponseSchema = z.object({
+  id: z.string().uuid(),
+  repoFullName: z.string(),
+  repoOwner: z.string(),
+  repoName: z.string(),
+  repoAvatar: z.string().nullable(),
+  secretCount: z.number(),
+  environments: z.array(z.string()),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type VaultMetadataResponse = z.infer<typeof VaultMetadataResponseSchema>;
+
+// GET /api/vaults/:vaultId/secrets - Secret list item (no value)
+export const SecretListItemSchema = z.object({
+  id: z.string().uuid(),
+  key: z.string(),
+  environment: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type SecretListItem = z.infer<typeof SecretListItemSchema>;
+
+export const SecretListResponseSchema = z.object({
+  secrets: z.array(SecretListItemSchema),
+  total: z.number(),
+});
+
+export type SecretListResponse = z.infer<typeof SecretListResponseSchema>;
+
+// POST /api/vaults/:vaultId/secrets - Upsert secret request
+export const UpsertSecretRequestSchema = z.object({
+  key: z.string().min(1).max(255).regex(/^[A-Z][A-Z0-9_]*$/, {
+    message: 'Key must be uppercase with underscores (e.g., DATABASE_URL)',
+  }),
+  value: z.string(),
+  environment: z.string().min(1).max(50).default('default'),
+});
+
+export type UpsertSecretRequest = z.infer<typeof UpsertSecretRequestSchema>;
+
+export const UpsertSecretResponseSchema = z.object({
+  id: z.string().uuid(),
+  status: z.enum(['created', 'updated']),
+});
+
+export type UpsertSecretResponse = z.infer<typeof UpsertSecretResponseSchema>;
+
+// GET /api/activity - Activity log item
+export const ActivityLogItemSchema = z.object({
+  id: z.string().uuid(),
+  action: z.enum([
+    'vault_created',
+    'secrets_pushed',
+    'secrets_pulled',
+    'secret_created',
+    'secret_updated',
+    'secret_deleted',
+    'secret_rotated',
+    'permission_changed',
+  ]),
+  vaultId: z.string().uuid().nullable(),
+  repoFullName: z.string().nullable(),
+  actor: z.object({
+    id: z.string().uuid(),
+    username: z.string(),
+    avatarUrl: z.string().nullable(),
+  }),
+  platform: z.enum(['cli', 'web', 'api']),
+  metadata: z.record(z.unknown()).nullable(),
+  timestamp: z.string(),
+});
+
+export type ActivityLogItem = z.infer<typeof ActivityLogItemSchema>;
+
+export const ActivityLogResponseSchema = z.object({
+  activities: z.array(ActivityLogItemSchema),
+  total: z.number(),
+});
+
+export type ActivityLogResponse = z.infer<typeof ActivityLogResponseSchema>;
+
+// Vault ID param schema
+export const VaultIdParamSchema = z.object({
+  vaultId: z.string().uuid(),
+});
+
+export type VaultIdParam = z.infer<typeof VaultIdParamSchema>;

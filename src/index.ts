@@ -8,6 +8,7 @@ import { config } from './config';
 import { AppError } from './errors';
 import { authRoutes } from './routes/auth';
 import { vaultRoutes } from './routes/vaults';
+import { apiRoutes } from './routes/api';
 import { initAnalytics, shutdownAnalytics, trackEvent, AnalyticsEvents } from './utils/analytics';
 import { sql as dbConnection } from './db';
 
@@ -76,6 +77,7 @@ fastify.get('/health', async (request, reply) => {
 // Register routes
 fastify.register(authRoutes, { prefix: '/auth' });
 fastify.register(vaultRoutes, { prefix: '/vaults' });
+fastify.register(apiRoutes, { prefix: '/api' });
 
 // Global error handler
 fastify.setErrorHandler((error: Error & { statusCode?: number; validation?: unknown }, request, reply) => {

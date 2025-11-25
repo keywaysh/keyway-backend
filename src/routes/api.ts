@@ -4,7 +4,7 @@ import { eq, and, desc } from 'drizzle-orm';
 import { authenticateGitHub } from '../middleware/auth';
 import { NotFoundError, ForbiddenError } from '../errors';
 import { encrypt, sanitizeForLogging } from '../utils/encryption';
-import { hasRepoAccess } from '../utils/github';
+import { hasRepoAccess, getRepoPermission, getRepoAccessAndPermission } from '../utils/github';
 import { trackEvent, AnalyticsEvents } from '../utils/analytics';
 import {
   UpsertSecretRequestSchema,
@@ -96,6 +96,7 @@ export async function apiRoutes(fastify: FastifyInstance) {
     preHandler: [authenticateGitHub],
   }, async (request, reply) => {
     const githubUser = request.githubUser!;
+    const accessToken = request.accessToken!;
 
     // Get user from database
     const user = await db.query.users.findFirst({
@@ -120,26 +121,32 @@ export async function apiRoutes(fastify: FastifyInstance) {
       orderBy: [desc(vaults.updatedAt)],
     });
 
-    // Build vault list with metadata
-    const vaultList: VaultListItem[] = ownedVaults.map((vault) => {
-      const [repoOwner, repoName] = vault.repoFullName.split('/');
+    // Build vault list with metadata and permissions (fetch in parallel)
+    const vaultList: VaultListItem[] = await Promise.all(
+      ownedVaults.map(async (vault) => {
+        const [repoOwner, repoName] = vault.repoFullName.split('/');
 
-      // Get unique environments from secrets
-      const environments = [...new Set(vault.secrets.map(s => s.environment))];
-      if (environments.length === 0) {
-        environments.push('default');
-      }
+        // Get unique environments from secrets
+        const environments = [...new Set(vault.secrets.map(s => s.environment))];
+        if (environments.length === 0) {
+          environments.push('default');
+        }
 
-      return {
-        id: vault.id,
-        repoOwner,
-        repoName,
-        repoAvatar: getGitHubAvatarUrl(repoOwner),
-        secretCount: vault.secrets.length,
-        environments,
-        updatedAt: vault.updatedAt.toISOString(),
-      };
-    });
+        // Fetch user's permission for this repo
+        const permission = await getRepoPermission(accessToken, vault.repoFullName);
+
+        return {
+          id: vault.id,
+          repoOwner,
+          repoName,
+          repoAvatar: getGitHubAvatarUrl(repoOwner),
+          secretCount: vault.secrets.length,
+          environments,
+          permission,
+          updatedAt: vault.updatedAt.toISOString(),
+        };
+      })
+    );
 
     const response: VaultListResponse = {
       vaults: vaultList,
@@ -172,8 +179,8 @@ export async function apiRoutes(fastify: FastifyInstance) {
       throw new NotFoundError('Vault not found');
     }
 
-    // Verify user has access to the repository
-    const hasAccess = await hasRepoAccess(accessToken, vault.repoFullName);
+    // Verify user has access and get permission in a single API call
+    const { hasAccess, permission } = await getRepoAccessAndPermission(accessToken, vault.repoFullName);
     if (!hasAccess) {
       throw new ForbiddenError('You do not have access to this vault');
     }
@@ -194,6 +201,7 @@ export async function apiRoutes(fastify: FastifyInstance) {
       repoAvatar: getGitHubAvatarUrl(repoOwner),
       secretCount: vault.secrets.length,
       environments,
+      permission,
       createdAt: vault.createdAt.toISOString(),
       updatedAt: vault.updatedAt.toISOString(),
     };

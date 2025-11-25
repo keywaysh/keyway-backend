@@ -24,7 +24,9 @@ interface GitHubRepo {
   };
   permissions?: {
     pull?: boolean;
+    triage?: boolean;
     push?: boolean;
+    maintain?: boolean;
     admin?: boolean;
   };
 }
@@ -95,24 +97,54 @@ export async function hasRepoAccess(
   accessToken: string,
   repoFullName: string
 ): Promise<boolean> {
+  const result = await getRepoAccessAndPermission(accessToken, repoFullName);
+  return result.hasAccess;
+}
+
+/**
+ * Get both access status and permission level in a single API call
+ * Use this to avoid duplicate GitHub API calls
+ */
+export async function getRepoAccessAndPermission(
+  accessToken: string,
+  repoFullName: string
+): Promise<{ hasAccess: boolean; permission: CollaboratorRole | null }> {
   const [owner, repo] = repoFullName.split('/');
 
-  // First, try to get the repository (will fail if no access)
-  const repoResponse = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${repo}`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: 'application/vnd.github.v3+json',
-    },
-  });
+  try {
+    const repoResponse = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${repo}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    });
 
-  if (!repoResponse.ok) {
-    return false;
+    if (!repoResponse.ok) {
+      return { hasAccess: false, permission: null };
+    }
+
+    const repoData = (await repoResponse.json()) as GitHubRepo;
+    const perms = repoData.permissions;
+
+    if (!perms) {
+      return { hasAccess: false, permission: null };
+    }
+
+    // Determine highest permission level
+    let permission: CollaboratorRole | null = null;
+    if (perms.admin) permission = 'admin';
+    else if (perms.maintain) permission = 'maintain';
+    else if (perms.push) permission = 'write';
+    else if (perms.triage) permission = 'triage';
+    else if (perms.pull) permission = 'read';
+
+    // Check if user has push access (collaborator or admin)
+    const hasAccess = perms.push === true || perms.admin === true;
+
+    return { hasAccess, permission };
+  } catch {
+    return { hasAccess: false, permission: null };
   }
-
-  const repoData = await repoResponse.json() as GitHubRepo;
-
-  // Check if user has push access (collaborator or admin)
-  return repoData.permissions?.push === true || repoData.permissions?.admin === true;
 }
 
 /**
@@ -139,6 +171,48 @@ export async function hasAdminAccess(
 
   // Only admin can initialize vaults
   return repoData.permissions?.admin === true;
+}
+
+/**
+ * Get user's permission level for a repository
+ * Returns the highest permission: admin > maintain > write > triage > read
+ */
+export async function getRepoPermission(
+  accessToken: string,
+  repoFullName: string
+): Promise<CollaboratorRole | null> {
+  const [owner, repo] = repoFullName.split('/');
+
+  try {
+    const repoResponse = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${repo}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    });
+
+    if (!repoResponse.ok) {
+      return null;
+    }
+
+    const repoData = (await repoResponse.json()) as GitHubRepo;
+    const perms = repoData.permissions;
+
+    if (!perms) {
+      return null;
+    }
+
+    // Return highest permission level
+    if (perms.admin) return 'admin';
+    if (perms.maintain) return 'maintain';
+    if (perms.push) return 'write';
+    if (perms.triage) return 'triage';
+    if (perms.pull) return 'read';
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**

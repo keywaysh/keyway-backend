@@ -182,6 +182,10 @@ export const UserProfileResponseSchema = z.object({
 
 export type UserProfileResponse = z.infer<typeof UserProfileResponseSchema>;
 
+// Permission levels (matches CollaboratorRole)
+export const PermissionLevelSchema = z.enum(['read', 'triage', 'write', 'maintain', 'admin']);
+export type PermissionLevel = z.infer<typeof PermissionLevelSchema>;
+
 // GET /api/vaults - Vault list item
 export const VaultListItemSchema = z.object({
   id: z.string().uuid(),
@@ -190,6 +194,7 @@ export const VaultListItemSchema = z.object({
   repoAvatar: z.string().nullable(),
   secretCount: z.number(),
   environments: z.array(z.string()),
+  permission: PermissionLevelSchema.nullable(),
   updatedAt: z.string(),
 });
 
@@ -211,6 +216,7 @@ export const VaultMetadataResponseSchema = z.object({
   repoAvatar: z.string().nullable(),
   secretCount: z.number(),
   environments: z.array(z.string()),
+  permission: PermissionLevelSchema.nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

@@ -176,7 +176,29 @@ export async function authRoutes(fastify: FastifyInstance) {
           }
         }
 
-        reply.header('Set-Cookie', cookieParts.join('; '));
+        // Also set a non-HttpOnly cookie so frontend JS can check if logged in
+        const flagCookieParts = [
+          'keyway_logged_in=true',
+          'Path=/',
+          'SameSite=Lax',
+          `Max-Age=${maxAge}`,
+        ];
+
+        if (isProduction) {
+          flagCookieParts.push('Secure');
+          const host = request.headers.host || '';
+          const parts = host.split('.');
+          if (parts.length >= 2) {
+            const rootDomain = parts.slice(-2).join('.');
+            flagCookieParts.push(`Domain=.${rootDomain}`);
+          }
+        }
+
+        // Set both cookies
+        reply.header('Set-Cookie', [
+          cookieParts.join('; '),
+          flagCookieParts.join('; '),
+        ]);
 
         // Redirect to frontend dashboard
         const redirectUrl = stateData.redirectUri || (isProduction ? 'https://keyway.sh/dashboard' : 'http://localhost:5173/dashboard');

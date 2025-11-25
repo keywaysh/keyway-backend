@@ -21,27 +21,35 @@ declare module 'fastify' {
 }
 
 /**
- * Extract and validate Authorization header
- * Supports both GitHub access tokens and Keyway JWT tokens
+ * Extract and validate authentication token
+ * Supports: Authorization header (Bearer), session cookie, or GitHub access tokens
  */
 export async function authenticateGitHub(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
+  let token: string | undefined;
+
+  // Try Authorization header first
   const authHeader = request.headers.authorization;
-
-  if (!authHeader) {
-    throw new UnauthorizedError('Authorization header required');
+  if (authHeader?.startsWith('Bearer ')) {
+    token = authHeader.substring(7);
   }
 
-  if (!authHeader.startsWith('Bearer ')) {
-    throw new UnauthorizedError('Authorization header must use Bearer scheme');
+  // Fall back to session cookie (for web dashboard)
+  if (!token) {
+    const cookieHeader = request.headers.cookie;
+    if (cookieHeader) {
+      const cookies = cookieHeader.split(';');
+      const sessionCookie = cookies.find(c => c.trim().startsWith('keyway_session='));
+      if (sessionCookie) {
+        token = sessionCookie.split('=')[1]?.trim();
+      }
+    }
   }
-
-  const token = authHeader.substring(7);
 
   if (!token) {
-    throw new UnauthorizedError('Access token is required');
+    throw new UnauthorizedError('Authentication required');
   }
 
   // Try to verify as Keyway JWT token first

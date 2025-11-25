@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import { authRoutes } from './routes/auth.routes';
 import { usersRoutes } from './routes/users.routes';
 import { vaultsRoutes } from './routes/vaults.routes';
 import { secretsRoutes } from './routes/secrets.routes';
@@ -6,10 +7,11 @@ import { activityRoutes } from './routes/activity.routes';
 
 /**
  * API v1 Router
- * All routes are prefixed with /api/v1
+ * All routes are prefixed with /v1
  */
 export async function apiV1Routes(fastify: FastifyInstance) {
   // Register route modules
+  fastify.register(authRoutes, { prefix: '/auth' });
   fastify.register(usersRoutes, { prefix: '/users' });
   fastify.register(vaultsRoutes, { prefix: '/vaults' });
   fastify.register(secretsRoutes, { prefix: '/secrets' });

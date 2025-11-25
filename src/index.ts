@@ -7,9 +7,6 @@ import { ZodError } from 'zod';
 import { config } from './config';
 import { AppError } from './errors';
 import { ApiError } from './lib';
-import { authRoutes } from './routes/auth';
-import { vaultRoutes } from './routes/vaults';
-import { apiRoutes } from './routes/api';
 import { apiV1Routes } from './api/v1';
 import { initAnalytics, shutdownAnalytics, trackEvent, AnalyticsEvents } from './utils/analytics';
 import { sql as dbConnection } from './db';
@@ -94,13 +91,8 @@ fastify.get('/health', async (request, reply) => {
   }
 });
 
-// Register routes (legacy)
-fastify.register(authRoutes, { prefix: '/auth' });
-fastify.register(vaultRoutes, { prefix: '/vaults' });
-fastify.register(apiRoutes, { prefix: '/api' });
-
 // Register API v1 routes
-fastify.register(apiV1Routes, { prefix: '/api/v1' });
+fastify.register(apiV1Routes, { prefix: '/v1' });
 
 // Global error handler
 fastify.setErrorHandler((error: Error & { statusCode?: number; validation?: unknown }, request, reply) => {

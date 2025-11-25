@@ -1,9 +1,9 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { authenticateGitHub } from '../../../middleware/auth';
-import { db, users } from '../../../db';
+import { authenticateGitHub, requireAdminAccess } from '../../../middleware/auth';
+import { db, users, vaults } from '../../../db';
 import { eq } from 'drizzle-orm';
-import { sendData, sendPaginatedData, sendCreated, sendNoContent, NotFoundError, ForbiddenError, buildPaginationMeta, parsePagination } from '../../../lib';
+import { sendData, sendPaginatedData, sendCreated, sendNoContent, NotFoundError, ForbiddenError, ConflictError, buildPaginationMeta, parsePagination } from '../../../lib';
 import {
   getVaultsForUser,
   getVaultByRepo,
@@ -20,6 +20,12 @@ import { hasRepoAccess } from '../../../utils/github';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
 
 // Schemas
+const CreateVaultSchema = z.object({
+  repoFullName: z.string().regex(/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/, {
+    message: 'Invalid repository format. Expected: owner/repo',
+  }),
+});
+
 const UpsertSecretSchema = z.object({
   key: z.string().min(1).max(255).regex(/^[A-Z][A-Z0-9_]*$/, {
     message: 'Key must be uppercase with underscores (e.g., DATABASE_URL)',
@@ -39,14 +45,15 @@ const PatchSecretSchema = z.object({
 
 /**
  * Vault routes
- * GET    /api/v1/vaults              - List vaults
- * GET    /api/v1/vaults/:owner/:repo - Get vault details
+ * GET    /v1/vaults              - List vaults
+ * POST   /v1/vaults              - Create vault (init)
+ * GET    /v1/vaults/:owner/:repo - Get vault details
  *
  * Nested secrets:
- * GET    /api/v1/vaults/:owner/:repo/secrets           - List secrets
- * POST   /api/v1/vaults/:owner/:repo/secrets           - Create/update secret
- * PATCH  /api/v1/vaults/:owner/:repo/secrets/:secretId - Update secret
- * DELETE /api/v1/vaults/:owner/:repo/secrets/:secretId - Delete secret
+ * GET    /v1/vaults/:owner/:repo/secrets           - List secrets
+ * POST   /v1/vaults/:owner/:repo/secrets           - Create/update secret
+ * PATCH  /v1/vaults/:owner/:repo/secrets/:secretId - Update secret
+ * DELETE /v1/vaults/:owner/:repo/secrets/:secretId - Delete secret
  */
 export async function vaultsRoutes(fastify: FastifyInstance) {
   /**
@@ -82,6 +89,71 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       buildPaginationMeta(pagination, vaultList.length, paginatedVaults.length),
       { requestId: request.id }
     );
+  });
+
+  /**
+   * POST /
+   * Create a new vault (init)
+   */
+  fastify.post('/', {
+    preHandler: [authenticateGitHub, requireAdminAccess],
+  }, async (request, reply) => {
+    const body = CreateVaultSchema.parse(request.body);
+    const githubUser = request.githubUser!;
+    const accessToken = request.accessToken!;
+
+    // Get or create user in our database
+    let user = await db.query.users.findFirst({
+      where: eq(users.githubId, githubUser.githubId),
+    });
+
+    if (!user) {
+      const [newUser] = await db
+        .insert(users)
+        .values({
+          githubId: githubUser.githubId,
+          username: githubUser.username,
+          email: githubUser.email,
+          avatarUrl: githubUser.avatarUrl,
+          accessToken,
+        })
+        .returning();
+      user = newUser;
+    }
+
+    // Check if vault already exists
+    const existingVault = await db.query.vaults.findFirst({
+      where: eq(vaults.repoFullName, body.repoFullName),
+    });
+
+    if (existingVault) {
+      throw new ConflictError('Vault already exists for this repository');
+    }
+
+    // Create vault
+    const [vault] = await db
+      .insert(vaults)
+      .values({
+        repoFullName: body.repoFullName,
+        ownerId: user.id,
+      })
+      .returning();
+
+    trackEvent(user.id, AnalyticsEvents.VAULT_INITIALIZED, {
+      repoFullName: body.repoFullName,
+    });
+
+    fastify.log.info({
+      repoFullName: body.repoFullName,
+      userId: user.id,
+      vaultId: vault.id,
+    }, 'Vault initialized');
+
+    return sendCreated(reply, {
+      vaultId: vault.id,
+      repoFullName: vault.repoFullName,
+      message: 'Vault initialized successfully',
+    }, { requestId: request.id });
   });
 
   /**

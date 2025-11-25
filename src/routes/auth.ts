@@ -324,12 +324,33 @@ export async function authRoutes(fastify: FastifyInstance) {
     const query = request.query as { redirect_uri?: string };
     const redirectUri = query.redirect_uri;
 
-    // Validate redirect_uri if provided
+    // Validate redirect_uri if provided (prevent open redirect attacks)
     if (redirectUri) {
-      const allowedOrigins = config.cors.allowedOrigins;
-      const isAllowed = config.cors.allowAll || allowedOrigins.some(origin => redirectUri.startsWith(origin));
+      let isAllowed = config.cors.allowAll;
 
       if (!isAllowed) {
+        try {
+          const redirectUrl = new URL(redirectUri);
+          const redirectOrigin = redirectUrl.origin;
+
+          // Check if the redirect origin exactly matches an allowed origin
+          isAllowed = config.cors.allowedOrigins.some(origin => {
+            try {
+              const allowedUrl = new URL(origin);
+              return redirectOrigin === allowedUrl.origin;
+            } catch {
+              // If allowed origin is not a valid URL, do exact match
+              return redirectOrigin === origin;
+            }
+          });
+        } catch {
+          // Invalid URL
+          isAllowed = false;
+        }
+      }
+
+      if (!isAllowed) {
+        fastify.log.warn({ redirectUri }, 'Blocked redirect to non-allowed origin');
         return reply.status(400).send({
           error: 'InvalidRedirectUri',
           message: 'The redirect_uri is not in the allowed origins list',

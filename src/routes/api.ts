@@ -3,20 +3,17 @@ import { db, users, vaults, secrets, activityLogs } from '../db';
 import { eq, and, desc } from 'drizzle-orm';
 import { authenticateGitHub } from '../middleware/auth';
 import { NotFoundError, ForbiddenError } from '../errors';
-import { encrypt, sanitizeForLogging } from '../utils/encryption';
+import { encrypt } from '../utils/encryption';
 import { hasRepoAccess, getRepoPermission, getRepoAccessAndPermission } from '../utils/github';
 import { trackEvent, AnalyticsEvents } from '../utils/analytics';
 import {
   UpsertSecretRequestSchema,
-  VaultIdParamSchema,
-  VaultSecretIdParamSchema,
   type UserProfileResponse,
   type VaultListItem,
   type VaultListResponse,
   type VaultMetadataResponse,
   type SecretListItem,
   type SecretListResponse,
-  type UpsertSecretResponse,
   type ActivityLogItem,
   type ActivityLogResponse,
 } from '../types';
@@ -493,192 +490,6 @@ export async function apiRoutes(fastify: FastifyInstance) {
   });
 
   /**
-   * GET /api/vaults/:vaultId/secrets
-   * Return the list of secrets WITHOUT values
-   */
-  fastify.get('/vaults/:vaultId/secrets', {
-    preHandler: [authenticateGitHub],
-  }, async (request, reply) => {
-    const { vaultId } = VaultIdParamSchema.parse(request.params);
-    const accessToken = request.accessToken!;
-
-    // Get vault
-    const vault = await db.query.vaults.findFirst({
-      where: eq(vaults.id, vaultId),
-    });
-
-    if (!vault) {
-      throw new NotFoundError('Vault not found');
-    }
-
-    // Verify user has access to the repository
-    const hasAccess = await hasRepoAccess(accessToken, vault.repoFullName);
-    if (!hasAccess) {
-      throw new ForbiddenError('You do not have access to this vault');
-    }
-
-    // Get all secrets for this vault (without encrypted values)
-    const vaultSecrets = await db.query.secrets.findMany({
-      where: eq(secrets.vaultId, vaultId),
-      orderBy: [desc(secrets.updatedAt)],
-    });
-
-    const secretList: SecretListItem[] = vaultSecrets.map((secret) => ({
-      id: secret.id,
-      key: secret.key,
-      environment: secret.environment,
-      createdAt: secret.createdAt.toISOString(),
-      updatedAt: secret.updatedAt.toISOString(),
-    }));
-
-    const response: SecretListResponse = {
-      secrets: secretList,
-      total: secretList.length,
-    };
-
-    return response;
-  });
-
-  /**
-   * POST /api/vaults/:vaultId/secrets
-   * Create OR update a secret (upsert)
-   */
-  fastify.post('/vaults/:vaultId/secrets', {
-    preHandler: [authenticateGitHub],
-  }, async (request, reply) => {
-    const { vaultId } = VaultIdParamSchema.parse(request.params);
-    const body = UpsertSecretRequestSchema.parse(request.body);
-    const githubUser = request.githubUser!;
-    const accessToken = request.accessToken!;
-
-    // Get vault
-    const vault = await db.query.vaults.findFirst({
-      where: eq(vaults.id, vaultId),
-    });
-
-    if (!vault) {
-      throw new NotFoundError('Vault not found');
-    }
-
-    // Verify user has access to the repository
-    const hasAccess = await hasRepoAccess(accessToken, vault.repoFullName);
-    if (!hasAccess) {
-      throw new ForbiddenError('You do not have access to this vault');
-    }
-
-    // Get user for activity logging
-    const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
-    });
-
-    if (!user) {
-      throw new ForbiddenError('User not found in database');
-    }
-
-    // Encrypt the secret value
-    const encryptedData = encrypt(body.value);
-
-    fastify.log.info({
-      vaultId,
-      key: body.key,
-      environment: body.environment,
-      valuePreview: sanitizeForLogging(body.value),
-    }, 'Upserting secret');
-
-    // Check if secret already exists for this key+environment
-    const existingSecret = await db.query.secrets.findFirst({
-      where: and(
-        eq(secrets.vaultId, vaultId),
-        eq(secrets.key, body.key),
-        eq(secrets.environment, body.environment)
-      ),
-    });
-
-    let secretId: string;
-    let status: 'created' | 'updated';
-
-    if (existingSecret) {
-      // Update existing secret
-      await db
-        .update(secrets)
-        .set({
-          encryptedValue: encryptedData.encryptedContent,
-          iv: encryptedData.iv,
-          authTag: encryptedData.authTag,
-          updatedAt: new Date(),
-        })
-        .where(eq(secrets.id, existingSecret.id));
-
-      secretId = existingSecret.id;
-      status = 'updated';
-
-      // Log activity
-      await logActivity(
-        user.id,
-        'secret_updated',
-        'web',
-        vaultId,
-        { key: body.key, environment: body.environment },
-        request
-      );
-    } else {
-      // Create new secret
-      const [newSecret] = await db
-        .insert(secrets)
-        .values({
-          vaultId,
-          key: body.key,
-          environment: body.environment,
-          encryptedValue: encryptedData.encryptedContent,
-          iv: encryptedData.iv,
-          authTag: encryptedData.authTag,
-        })
-        .returning();
-
-      secretId = newSecret.id;
-      status = 'created';
-
-      // Log activity
-      await logActivity(
-        user.id,
-        'secret_created',
-        'web',
-        vaultId,
-        { key: body.key, environment: body.environment },
-        request
-      );
-    }
-
-    // Update vault's updatedAt timestamp
-    await db
-      .update(vaults)
-      .set({ updatedAt: new Date() })
-      .where(eq(vaults.id, vaultId));
-
-    // Track analytics
-    trackEvent(user.id, AnalyticsEvents.SECRETS_PUSHED, {
-      repoFullName: vault.repoFullName,
-      environment: body.environment,
-      action: status,
-    });
-
-    fastify.log.info({
-      vaultId,
-      secretId,
-      key: body.key,
-      environment: body.environment,
-      status,
-    }, `Secret ${status}`);
-
-    const response: UpsertSecretResponse = {
-      id: secretId,
-      status,
-    };
-
-    return reply.status(status === 'created' ? 201 : 200).send(response);
-  });
-
-  /**
    * GET /api/activity
    * Return a list of historical actions for this user
    */
@@ -732,81 +543,5 @@ export async function apiRoutes(fastify: FastifyInstance) {
     };
 
     return response;
-  });
-
-  /**
-   * DELETE /api/vaults/:vaultId/secrets/:secretId
-   * Delete a secret
-   */
-  fastify.delete('/vaults/:vaultId/secrets/:secretId', {
-    preHandler: [authenticateGitHub],
-  }, async (request, reply) => {
-    const { vaultId, secretId } = VaultSecretIdParamSchema.parse(request.params);
-    const githubUser = request.githubUser!;
-    const accessToken = request.accessToken!;
-
-    // Get vault
-    const vault = await db.query.vaults.findFirst({
-      where: eq(vaults.id, vaultId),
-    });
-
-    if (!vault) {
-      throw new NotFoundError('Vault not found');
-    }
-
-    // Verify user has access to the repository
-    const hasAccess = await hasRepoAccess(accessToken, vault.repoFullName);
-    if (!hasAccess) {
-      throw new ForbiddenError('You do not have access to this vault');
-    }
-
-    // Get secret
-    const secret = await db.query.secrets.findFirst({
-      where: and(
-        eq(secrets.id, secretId),
-        eq(secrets.vaultId, vaultId)
-      ),
-    });
-
-    if (!secret) {
-      throw new NotFoundError('Secret not found');
-    }
-
-    // Get user for activity logging
-    const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
-    });
-
-    if (!user) {
-      throw new ForbiddenError('User not found in database');
-    }
-
-    // Delete the secret
-    await db.delete(secrets).where(eq(secrets.id, secretId));
-
-    // Log activity
-    await logActivity(
-      user.id,
-      'secret_deleted',
-      'web',
-      vaultId,
-      { key: secret.key, environment: secret.environment },
-      request
-    );
-
-    // Update vault's updatedAt timestamp
-    await db
-      .update(vaults)
-      .set({ updatedAt: new Date() })
-      .where(eq(vaults.id, vaultId));
-
-    fastify.log.info({
-      vaultId,
-      secretId,
-      key: secret.key,
-      environment: secret.environment,
-    }, 'Secret deleted');
-
-    return { success: true, message: 'Secret deleted' };
   });
 }

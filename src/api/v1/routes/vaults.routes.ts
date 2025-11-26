@@ -21,12 +21,11 @@ import {
 } from '../../../services';
 import { hasRepoAccess } from '../../../utils/github';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
+import { repoFullNameSchema } from '../../../types';
 
 // Schemas
 const CreateVaultSchema = z.object({
-  repoFullName: z.string().regex(/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/, {
-    message: 'Invalid repository format. Expected: owner/repo',
-  }),
+  repoFullName: repoFullNameSchema,
 });
 
 const UpsertSecretSchema = z.object({

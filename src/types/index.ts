@@ -1,5 +1,23 @@
 import { z } from 'zod';
 
+// ============================================
+// Shared Validation Patterns
+// ============================================
+
+// GitHub allows: alphanumeric, hyphens, underscores, and dots in org/repo names
+// Pattern: owner/repo where both parts allow a-z, A-Z, 0-9, -, _, .
+export const REPO_FULL_NAME_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
+export const ENVIRONMENT_NAME_PATTERN = /^[a-zA-Z0-9_.-]+$/;
+
+// Reusable Zod schemas for validation
+export const repoFullNameSchema = z.string().regex(REPO_FULL_NAME_PATTERN, {
+  message: 'Invalid repository format. Expected: owner/repo',
+});
+
+export const environmentNameSchema = z.string().regex(ENVIRONMENT_NAME_PATTERN, {
+  message: 'Invalid environment name. Only alphanumeric, hyphens, underscores, and dots allowed.',
+});
+
 // User schemas
 export const UserSchema = z.object({
   id: z.string(),
@@ -41,7 +59,7 @@ export type Secret = z.infer<typeof SecretSchema>;
 
 // API Request/Response schemas
 export const InitVaultRequestSchema = z.object({
-  repoFullName: z.string().regex(/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+$/),
+  repoFullName: repoFullNameSchema,
 });
 
 export type InitVaultRequest = z.infer<typeof InitVaultRequestSchema>;
@@ -63,8 +81,8 @@ export type PushSecretsBody = z.infer<typeof PushSecretsBodySchema>;
 
 // Full request schema (for internal use after combining params + body)
 export const PushSecretsRequestSchema = z.object({
-  repoFullName: z.string().regex(/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+$/),
-  environment: z.string().regex(/^[a-zA-Z0-9_-]+$/),
+  repoFullName: repoFullNameSchema,
+  environment: environmentNameSchema,
   content: z.string(),
 });
 
@@ -103,7 +121,7 @@ export type GitHubCallbackResponse = z.infer<typeof GitHubCallbackResponseSchema
 
 // Device Flow schemas
 export const DeviceFlowStartRequestSchema = z.object({
-  repository: z.string().regex(/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+$/).optional(),
+  repository: repoFullNameSchema.optional(),
 });
 
 export type DeviceFlowStartRequest = z.infer<typeof DeviceFlowStartRequestSchema>;

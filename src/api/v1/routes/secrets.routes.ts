@@ -7,10 +7,11 @@ import { encrypt, decrypt, sanitizeForLogging } from '../../../utils/encryption'
 import { sendData, NotFoundError } from '../../../lib';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
 import { logActivity, extractRequestInfo, detectPlatform } from '../../../services';
+import { repoFullNameSchema } from '../../../types';
 
 // Schemas
 const PushSecretsSchema = z.object({
-  repoFullName: z.string().regex(/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/),
+  repoFullName: repoFullNameSchema,
   environment: z.string().min(1).max(50).default('default'),
   secrets: z.record(z.string()), // { KEY: "value", KEY2: "value2" }
 });
@@ -73,13 +74,10 @@ export async function secretsRoutes(fastify: FastifyInstance) {
    * Push secrets (CLI format - JSON object of key-value pairs)
    */
   fastify.post('/push', {
-    preHandler: [authenticateGitHub],
+    preHandler: [authenticateGitHub, requireEnvironmentAccess('write')],
   }, async (request, reply) => {
     const body = PushSecretsSchema.parse(request.body);
     const githubUser = request.githubUser!;
-
-    // Manually check environment access (we can't use middleware easily here)
-    // This is a simplified version - the full check should use requireEnvironmentAccess
 
     const vault = await db.query.vaults.findFirst({
       where: eq(vaults.repoFullName, body.repoFullName),
@@ -194,7 +192,7 @@ export async function secretsRoutes(fastify: FastifyInstance) {
    * Pull secrets (returns .env format content)
    */
   fastify.get('/pull', {
-    preHandler: [authenticateGitHub],
+    preHandler: [authenticateGitHub, requireEnvironmentAccess('read')],
   }, async (request, reply) => {
     const query = PullSecretsQuerySchema.parse(request.query);
     const repoFullName = query.repo;

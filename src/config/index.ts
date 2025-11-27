@@ -38,6 +38,9 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((val) => (val ? val.split(',').map((s) => s.trim()) : [])),
+
+  // Security detection (optional - ipinfo.io works without token for 50k req/month)
+  IPINFO_TOKEN: z.string().optional(),
 });
 
 // Validate environment variables
@@ -95,6 +98,10 @@ export const config = {
   cors: {
     allowedOrigins: env.ALLOWED_ORIGINS,
     allowAll: env.ALLOWED_ORIGINS.length === 0 && env.NODE_ENV === 'development',
+  },
+
+  security: {
+    ipinfoToken: env.IPINFO_TOKEN,
   },
 } as const;
 

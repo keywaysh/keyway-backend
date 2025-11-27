@@ -7,6 +7,7 @@ import { encrypt, decrypt, sanitizeForLogging } from '../../../utils/encryption'
 import { sendData, NotFoundError } from '../../../lib';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
 import { logActivity, extractRequestInfo, detectPlatform } from '../../../services';
+import { processPullEvent, generateDeviceId } from '../../../services/security.service';
 import { repoFullNameSchema } from '../../../types';
 
 // Schemas
@@ -253,6 +254,19 @@ export async function secretsRoutes(fastify: FastifyInstance) {
         },
         ...extractRequestInfo(request),
       });
+
+      // Fire-and-forget security detection - don't block response
+      const deviceId = generateDeviceId(
+        request.headers['user-agent'] || null,
+        request.ip || 'unknown'
+      );
+      processPullEvent({
+        userId: user.id,
+        vaultId: vault.id,
+        deviceId,
+        ip: request.ip || 'unknown',
+        userAgent: request.headers['user-agent'] || null,
+      }).catch(err => fastify.log.error(err, 'Security detection failed'));
     }
 
     return sendData(reply, { content }, { requestId: request.id });

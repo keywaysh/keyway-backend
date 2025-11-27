@@ -1,4 +1,4 @@
-import { pgTable, text, integer, timestamp, uuid, pgEnum } from 'drizzle-orm/pg-core';
+import { pgTable, text, integer, timestamp, uuid, pgEnum, decimal, jsonb } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 // Device flow status enum
@@ -42,6 +42,15 @@ export const activityPlatformEnum = pgEnum('activity_platform', [
   'cli',
   'web',
   'api',
+]);
+
+// Security alert types
+export const securityAlertTypeEnum = pgEnum('security_alert_type', [
+  'new_device',
+  'new_location',
+  'impossible_travel',
+  'weird_user_agent',
+  'rate_anomaly',
 ]);
 
 export const users = pgTable('users', {
@@ -110,11 +119,41 @@ export const activityLogs = pgTable('activity_logs', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// Pull events for security detection
+export const pullEvents = pgTable('pull_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  vaultId: uuid('vault_id').notNull().references(() => vaults.id, { onDelete: 'cascade' }),
+  deviceId: text('device_id').notNull(),
+  ip: text('ip').notNull(),
+  userAgent: text('user_agent'),
+  country: text('country'),
+  city: text('city'),
+  latitude: decimal('latitude', { precision: 10, scale: 6 }),
+  longitude: decimal('longitude', { precision: 10, scale: 6 }),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// Security alerts
+export const securityAlerts = pgTable('security_alerts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  vaultId: uuid('vault_id').notNull().references(() => vaults.id, { onDelete: 'cascade' }),
+  deviceId: text('device_id').notNull(),
+  alertType: securityAlertTypeEnum('alert_type').notNull(),
+  message: text('message').notNull(),
+  details: jsonb('details').default({}),
+  pullEventId: uuid('pull_event_id').references(() => pullEvents.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   vaults: many(vaults),
   deviceCodes: many(deviceCodes),
   activityLogs: many(activityLogs),
+  pullEvents: many(pullEvents),
+  securityAlerts: many(securityAlerts),
 }));
 
 export const vaultsRelations = relations(vaults, ({ one, many }) => ({
@@ -125,6 +164,8 @@ export const vaultsRelations = relations(vaults, ({ one, many }) => ({
   secrets: many(secrets),
   environmentPermissions: many(environmentPermissions),
   activityLogs: many(activityLogs),
+  pullEvents: many(pullEvents),
+  securityAlerts: many(securityAlerts),
 }));
 
 export const secretsRelations = relations(secrets, ({ one }) => ({
@@ -159,6 +200,33 @@ export const activityLogsRelations = relations(activityLogs, ({ one }) => ({
   }),
 }));
 
+export const pullEventsRelations = relations(pullEvents, ({ one, many }) => ({
+  user: one(users, {
+    fields: [pullEvents.userId],
+    references: [users.id],
+  }),
+  vault: one(vaults, {
+    fields: [pullEvents.vaultId],
+    references: [vaults.id],
+  }),
+  securityAlerts: many(securityAlerts),
+}));
+
+export const securityAlertsRelations = relations(securityAlerts, ({ one }) => ({
+  user: one(users, {
+    fields: [securityAlerts.userId],
+    references: [users.id],
+  }),
+  vault: one(vaults, {
+    fields: [securityAlerts.vaultId],
+    references: [vaults.id],
+  }),
+  pullEvent: one(pullEvents, {
+    fields: [securityAlerts.pullEventId],
+    references: [pullEvents.id],
+  }),
+}));
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Vault = typeof vaults.$inferSelect;
@@ -171,7 +239,12 @@ export type EnvironmentPermission = typeof environmentPermissions.$inferSelect;
 export type NewEnvironmentPermission = typeof environmentPermissions.$inferInsert;
 export type ActivityLog = typeof activityLogs.$inferSelect;
 export type NewActivityLog = typeof activityLogs.$inferInsert;
+export type PullEvent = typeof pullEvents.$inferSelect;
+export type NewPullEvent = typeof pullEvents.$inferInsert;
+export type SecurityAlert = typeof securityAlerts.$inferSelect;
+export type NewSecurityAlert = typeof securityAlerts.$inferInsert;
 export type CollaboratorRole = typeof collaboratorRoleEnum.enumValues[number];
 export type PermissionType = typeof permissionTypeEnum.enumValues[number];
 export type ActivityAction = typeof activityActionEnum.enumValues[number];
 export type ActivityPlatform = typeof activityPlatformEnum.enumValues[number];
+export type SecurityAlertType = typeof securityAlertTypeEnum.enumValues[number];

@@ -22,6 +22,7 @@ import {
 import { hasRepoAccess } from '../../../utils/github';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
 import { repoFullNameSchema } from '../../../types';
+import { getSecurityAlerts } from '../../../services/security.service';
 
 // Schemas
 const CreateVaultSchema = z.object({
@@ -605,5 +606,48 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
         write: getDefaultPermission(environment, 'write'),
       },
     }, { requestId: request.id });
+  });
+
+  // ============================================
+  // Security routes
+  // ============================================
+
+  /**
+   * GET /:owner/:repo/security/alerts
+   * Get security alerts for a vault
+   */
+  fastify.get('/:owner/:repo/security/alerts', {
+    preHandler: [authenticateGitHub],
+  }, async (request, reply) => {
+    const params = request.params as { owner: string; repo: string };
+    const repoFullName = `${params.owner}/${params.repo}`;
+    const query = request.query as { limit?: string; offset?: string };
+    const limit = Math.min(parseInt(query.limit || '50', 10), 100);
+    const offset = parseInt(query.offset || '0', 10);
+    const accessToken = request.accessToken!;
+
+    const vault = await getVaultByRepoInternal(repoFullName);
+    if (!vault) {
+      throw new NotFoundError('Vault not found');
+    }
+
+    const hasAccess = await hasRepoAccess(accessToken, vault.repoFullName);
+    if (!hasAccess) {
+      throw new ForbiddenError('You do not have access to this vault');
+    }
+
+    const alerts = await getSecurityAlerts(vault.id, limit, offset);
+
+    return sendData(reply, alerts.map(a => ({
+      id: a.id,
+      type: a.alertType,
+      message: a.message,
+      createdAt: a.createdAt,
+      event: a.pullEvent ? {
+        ip: a.pullEvent.ip,
+        location: { country: a.pullEvent.country, city: a.pullEvent.city },
+        deviceId: a.pullEvent.deviceId,
+      } : null,
+    })), { requestId: request.id });
   });
 }

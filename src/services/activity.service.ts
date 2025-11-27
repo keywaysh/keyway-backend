@@ -69,20 +69,23 @@ export async function getActivityForUser(
     offset: pagination.offset,
   });
 
-  const activities: ActivityLogItem[] = logs.map((log) => ({
-    id: log.id,
-    action: log.action,
-    vaultId: log.vaultId,
-    repoFullName: log.vault?.repoFullName || null,
-    actor: {
-      id: log.user.id,
-      username: log.user.username,
-      avatarUrl: log.user.avatarUrl,
-    },
-    platform: log.platform,
-    metadata: log.metadata ? JSON.parse(log.metadata) : null,
-    timestamp: log.createdAt.toISOString(),
-  }));
+  const activities: ActivityLogItem[] = logs.map((log) => {
+    const metadata = log.metadata ? JSON.parse(log.metadata) : null;
+    return {
+      id: log.id,
+      action: log.action,
+      vaultId: log.vaultId,
+      repoFullName: log.vault?.repoFullName || metadata?.repoFullName || null,
+      actor: {
+        id: log.user.id,
+        username: log.user.username,
+        avatarUrl: log.user.avatarUrl,
+      },
+      platform: log.platform,
+      metadata,
+      timestamp: log.createdAt.toISOString(),
+    };
+  });
 
   return { activities, total };
 }

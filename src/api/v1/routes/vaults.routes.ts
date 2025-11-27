@@ -357,7 +357,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       action,
       platform: detectPlatform(request),
       vaultId: vault.id,
-      metadata: { key: body.key, environment: body.environment },
+      metadata: { key: body.key, environment: body.environment, repoFullName: vault.repoFullName },
       ...extractRequestInfo(request),
     });
 
@@ -417,7 +417,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       action: 'secret_updated',
       platform: detectPlatform(request),
       vaultId: vault.id,
-      metadata: { key: updatedSecret.key, environment: updatedSecret.environment },
+      metadata: { key: updatedSecret.key, environment: updatedSecret.environment, repoFullName: vault.repoFullName },
       ...extractRequestInfo(request),
     });
 
@@ -465,7 +465,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       action: 'secret_deleted',
       platform: detectPlatform(request),
       vaultId: vault.id,
-      metadata: { key: deletedSecret.key, environment: deletedSecret.environment },
+      metadata: { key: deletedSecret.key, environment: deletedSecret.environment, repoFullName: vault.repoFullName },
       ...extractRequestInfo(request),
     });
 

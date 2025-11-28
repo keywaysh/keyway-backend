@@ -25,7 +25,20 @@ const fastify = Fastify({
 // Register security plugins
 fastify.register(helmet, {
   contentSecurityPolicy: config.server.isProduction
-    ? undefined
+    ? {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"], // Inline styles in HTML pages
+          imgSrc: ["'self'", "data:", "https:"],
+          connectSrc: ["'self'"],
+          fontSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          frameAncestors: ["'none'"],
+          formAction: ["'self'", "https://github.com"],
+          upgradeInsecureRequests: [],
+        },
+      }
     : false, // Disable CSP in development
 });
 

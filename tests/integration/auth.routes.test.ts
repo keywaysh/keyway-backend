@@ -239,6 +239,134 @@ describe('Auth Routes', () => {
       expect(response.statusCode).toBe(200);
       expect(response.body).toContain('ABCD-1234');
     });
+
+    it('should contain form with correct action', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/auth/device/verify',
+      });
+
+      expect(response.body).toContain('action="/v1/auth/device/verify"');
+      expect(response.body).toContain('method="POST"');
+    });
+
+    it('should contain permissions info', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/auth/device/verify',
+      });
+
+      expect(response.body).toContain('What Keyway will access');
+      expect(response.body).toContain('NEVER reads your repository code');
+    });
+
+    it('should NOT contain inline scripts (CSP compliance)', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/auth/device/verify?user_code=ABCD-1234',
+      });
+
+      expect(response.body).not.toContain('<script>');
+      expect(response.body).not.toContain('</script>');
+    });
+
+    it('should show confirmation message when code is pre-filled', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/auth/device/verify?user_code=ABCD-1234',
+      });
+
+      expect(response.body).toContain('Code detected');
+      expect(response.body).toContain('ABCD-1234');
+    });
+  });
+
+  describe('POST /v1/auth/device/verify', () => {
+    it('should redirect to GitHub OAuth for valid code', async () => {
+      const { db } = await import('../../src/db');
+      (db.query.deviceCodes.findFirst as any).mockResolvedValue({
+        ...mockDeviceCode,
+        status: 'pending',
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/auth/device/verify',
+        payload: 'user_code=ABCD-1234',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+      });
+
+      expect(response.statusCode).toBe(302);
+      expect(response.headers.location).toContain('github.com/login/oauth/authorize');
+    });
+
+    it('should return error page for invalid code', async () => {
+      const { db } = await import('../../src/db');
+      (db.query.deviceCodes.findFirst as any).mockResolvedValue(null);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/auth/device/verify',
+        payload: 'user_code=INVALID',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toContain('text/html');
+      expect(response.body).toContain('Invalid Code');
+    });
+
+    it('should return error page for expired code', async () => {
+      const { db } = await import('../../src/db');
+      (db.query.deviceCodes.findFirst as any).mockResolvedValue({
+        ...mockDeviceCode,
+        status: 'pending',
+        expiresAt: new Date(Date.now() - 1000),
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/auth/device/verify',
+        payload: 'user_code=ABCD-1234',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain('Code Expired');
+    });
+
+    it('should include signed state in GitHub redirect URL', async () => {
+      const { db } = await import('../../src/db');
+      (db.query.deviceCodes.findFirst as any).mockResolvedValue({
+        ...mockDeviceCode,
+        status: 'pending',
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/auth/device/verify',
+        payload: 'user_code=ABCD-1234',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+      });
+
+      expect(response.statusCode).toBe(302);
+      const location = response.headers.location as string;
+      expect(location).toContain('state=');
+
+      // State should be base64 encoded and contain signature
+      const url = new URL(location);
+      const state = url.searchParams.get('state');
+      expect(state).toBeTruthy();
+      expect(state!.length).toBeGreaterThan(20);
+    });
   });
 
   describe('POST /v1/auth/logout', () => {

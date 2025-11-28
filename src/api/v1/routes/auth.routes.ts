@@ -537,6 +537,8 @@ function renderSuccessPage(username: string): string {
 }
 
 function renderVerifyPage(userCode: string, autoSubmit: boolean): string {
+  // For autoSubmit, we redirect server-side immediately instead of using JS
+  // This avoids CSP issues with inline scripts
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -557,7 +559,6 @@ function renderVerifyPage(userCode: string, autoSubmit: boolean): string {
     button:hover { background: #5568d3; }
     button:disabled { background: #a0aec0; cursor: not-allowed; }
     .logo { font-size: 48px; text-align: center; margin-bottom: 20px; }
-    .countdown { font-size: 12px; color: #718096; margin-top: 8px; text-align: center; }
     .permissions { background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 20px; font-size: 14px; }
     .permissions h3 { font-size: 16px; margin-bottom: 12px; color: #2d3748; }
     .permissions ul { list-style: none; }
@@ -571,7 +572,7 @@ function renderVerifyPage(userCode: string, autoSubmit: boolean): string {
     <div class="logo">🔐</div>
     <h1>Verify Your Device</h1>
     ${autoSubmit
-      ? `<p>Code detected! Redirecting to GitHub authentication...</p><div class="info">✅ Code <strong>${userCode}</strong> confirmed</div>`
+      ? `<p>Code detected! Click below to continue with GitHub authentication.</p><div class="info">✅ Code <strong>${userCode}</strong> confirmed</div>`
       : '<p>Enter the code displayed on your device to continue with GitHub authentication.</p>'
     }
     <div class="permissions">
@@ -585,22 +586,9 @@ function renderVerifyPage(userCode: string, autoSubmit: boolean): string {
     </div>
     <form id="verifyForm" action="/v1/auth/device/verify" method="POST">
       <input type="text" name="user_code" id="userCodeInput" placeholder="XXXX-XXXX" value="${userCode}" pattern="[A-Z0-9]{4}-[A-Z0-9]{4}" maxlength="9" required ${autoSubmit ? 'readonly' : 'autofocus'} />
-      <button type="submit" id="submitBtn"${autoSubmit ? ' disabled' : ''}>${autoSubmit ? 'Redirecting...' : 'Continue with GitHub'}</button>
+      <button type="submit">${autoSubmit ? 'Continue with GitHub' : 'Continue with GitHub'}</button>
     </form>
-    ${autoSubmit ? '<div class="countdown" id="countdown">Redirecting in <span id="timer">2</span> seconds...</div>' : ''}
   </div>
-  ${autoSubmit ? `<script>
-    let timeLeft = 2;
-    const timerEl = document.getElementById('timer');
-    const countdown = setInterval(() => {
-      timeLeft--;
-      if (timerEl) timerEl.textContent = timeLeft;
-      if (timeLeft <= 0) {
-        clearInterval(countdown);
-        document.getElementById('verifyForm').submit();
-      }
-    }, 1000);
-  </script>` : ''}
 </body>
 </html>`;
 }

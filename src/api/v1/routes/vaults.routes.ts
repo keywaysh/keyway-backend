@@ -26,7 +26,7 @@ import {
 } from '../../../services';
 import { hasRepoAccess, getRepoInfo } from '../../../utils/github';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
-import { repoFullNameSchema } from '../../../types';
+import { repoFullNameSchema, DEFAULT_ENVIRONMENTS } from '../../../types';
 import { getSecurityAlerts } from '../../../services/security.service';
 
 // Security limits for secrets
@@ -65,6 +65,23 @@ const EnvironmentPermissionsSchema = z.object({
     write: z.enum(['read', 'triage', 'write', 'maintain', 'admin']),
   }),
 });
+
+// Environment name validation: lowercase, alphanumeric + dash/underscore, 2-30 chars
+const environmentNameSchema = z.string()
+  .min(2, 'Environment name must be at least 2 characters')
+  .max(30, 'Environment name must not exceed 30 characters')
+  .regex(/^[a-z][a-z0-9_-]*$/, {
+    message: 'Environment name must be lowercase, start with a letter, and contain only letters, numbers, dashes, or underscores',
+  });
+
+const CreateEnvironmentSchema = z.object({
+  name: environmentNameSchema,
+});
+
+const RenameEnvironmentSchema = z.object({
+  newName: environmentNameSchema,
+});
+
 
 /**
  * Vault routes
@@ -512,15 +529,239 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       throw new ForbiddenError('You do not have access to this vault');
     }
 
-    // Get unique environments from secrets
-    const vaultSecrets = await db.query.secrets.findMany({
-      where: eq(secrets.vaultId, vault.id),
-      columns: { environment: true },
-    });
-
-    const environments = [...new Set(vaultSecrets.map(s => s.environment))].sort();
+    // Return vault.environments, fallback to defaults if empty/null (for pre-migration vaults)
+    const environments = vault.environments && vault.environments.length > 0
+      ? vault.environments
+      : DEFAULT_ENVIRONMENTS;
 
     return sendData(reply, { environments }, { requestId: request.id });
+  });
+
+  /**
+   * POST /:owner/:repo/environments
+   * Create a new environment
+   */
+  fastify.post('/:owner/:repo/environments', {
+    preHandler: [authenticateGitHub, requireAdminAccess],
+  }, async (request, reply) => {
+    const params = request.params as { owner: string; repo: string };
+    const repoFullName = `${params.owner}/${params.repo}`;
+    const body = CreateEnvironmentSchema.parse(request.body);
+    const githubUser = request.githubUser!;
+
+    const vault = await getVaultByRepoInternal(repoFullName);
+    if (!vault) {
+      throw new NotFoundError('Vault not found');
+    }
+
+    // Get current environments, fallback to defaults
+    const currentEnvs = vault.environments && vault.environments.length > 0
+      ? vault.environments
+      : [...DEFAULT_ENVIRONMENTS];
+
+    // Check for duplicates
+    if (currentEnvs.includes(body.name)) {
+      throw new ConflictError(`Environment '${body.name}' already exists`);
+    }
+
+    // Add new environment
+    const newEnvs = [...currentEnvs, body.name].sort();
+    await db
+      .update(vaults)
+      .set({ environments: newEnvs, updatedAt: new Date() })
+      .where(eq(vaults.id, vault.id));
+
+    // Log activity
+    const user = await db.query.users.findFirst({
+      where: eq(users.githubId, githubUser.githubId),
+    });
+    if (user) {
+      await logActivity({
+        userId: user.id,
+        action: 'environment_created',
+        platform: detectPlatform(request),
+        vaultId: vault.id,
+        metadata: { environment: body.name, repoFullName },
+        ...extractRequestInfo(request),
+      });
+    }
+
+    fastify.log.info({ repoFullName, environment: body.name }, 'Environment created');
+
+    return sendCreated(reply, {
+      environment: body.name,
+      environments: newEnvs,
+    }, { requestId: request.id });
+  });
+
+  /**
+   * PATCH /:owner/:repo/environments/:name
+   * Rename an environment
+   */
+  fastify.patch('/:owner/:repo/environments/:name', {
+    preHandler: [authenticateGitHub, requireAdminAccess],
+  }, async (request, reply) => {
+    const params = request.params as { owner: string; repo: string; name: string };
+    const repoFullName = `${params.owner}/${params.repo}`;
+    const oldName = params.name;
+    const body = RenameEnvironmentSchema.parse(request.body);
+    const githubUser = request.githubUser!;
+
+    const vault = await getVaultByRepoInternal(repoFullName);
+    if (!vault) {
+      throw new NotFoundError('Vault not found');
+    }
+
+    // Get current environments
+    const currentEnvs = vault.environments && vault.environments.length > 0
+      ? vault.environments
+      : [...DEFAULT_ENVIRONMENTS];
+
+    // Check old name exists
+    if (!currentEnvs.includes(oldName)) {
+      throw new NotFoundError(`Environment '${oldName}' not found`);
+    }
+
+    // Check new name doesn't already exist
+    if (currentEnvs.includes(body.newName)) {
+      throw new ConflictError(`Environment '${body.newName}' already exists`);
+    }
+
+    // Update environments array
+    const newEnvs = currentEnvs.map(e => e === oldName ? body.newName : e).sort();
+
+    // Perform all updates in a transaction
+    await db.transaction(async (tx) => {
+      // Update vault environments
+      await tx
+        .update(vaults)
+        .set({ environments: newEnvs, updatedAt: new Date() })
+        .where(eq(vaults.id, vault.id));
+
+      // Update all secrets with old environment name
+      await tx
+        .update(secrets)
+        .set({ environment: body.newName, updatedAt: new Date() })
+        .where(and(
+          eq(secrets.vaultId, vault.id),
+          eq(secrets.environment, oldName)
+        ));
+
+      // Update environment permissions if any
+      await tx
+        .update(environmentPermissions)
+        .set({ environment: body.newName, updatedAt: new Date() })
+        .where(and(
+          eq(environmentPermissions.vaultId, vault.id),
+          eq(environmentPermissions.environment, oldName)
+        ));
+    });
+
+    // Log activity
+    const user = await db.query.users.findFirst({
+      where: eq(users.githubId, githubUser.githubId),
+    });
+    if (user) {
+      await logActivity({
+        userId: user.id,
+        action: 'environment_renamed',
+        platform: detectPlatform(request),
+        vaultId: vault.id,
+        metadata: { oldName, newName: body.newName, repoFullName },
+        ...extractRequestInfo(request),
+      });
+    }
+
+    fastify.log.info({ repoFullName, oldName, newName: body.newName }, 'Environment renamed');
+
+    return sendData(reply, {
+      oldName,
+      newName: body.newName,
+      environments: newEnvs,
+    }, { requestId: request.id });
+  });
+
+  /**
+   * DELETE /:owner/:repo/environments/:name
+   * Delete an environment and all its secrets
+   */
+  fastify.delete('/:owner/:repo/environments/:name', {
+    preHandler: [authenticateGitHub, requireAdminAccess],
+  }, async (request, reply) => {
+    const params = request.params as { owner: string; repo: string; name: string };
+    const repoFullName = `${params.owner}/${params.repo}`;
+    const envName = params.name;
+    const githubUser = request.githubUser!;
+
+    const vault = await getVaultByRepoInternal(repoFullName);
+    if (!vault) {
+      throw new NotFoundError('Vault not found');
+    }
+
+    // Get current environments
+    const currentEnvs = vault.environments && vault.environments.length > 0
+      ? vault.environments
+      : [...DEFAULT_ENVIRONMENTS];
+
+    // Check environment exists
+    if (!currentEnvs.includes(envName)) {
+      throw new NotFoundError(`Environment '${envName}' not found`);
+    }
+
+    // Prevent deleting the last environment
+    if (currentEnvs.length === 1) {
+      throw new ForbiddenError('Cannot delete the last environment');
+    }
+
+    // Remove from environments array
+    const newEnvs = currentEnvs.filter(e => e !== envName);
+
+    // Perform all updates in a transaction
+    await db.transaction(async (tx) => {
+      // Update vault environments
+      await tx
+        .update(vaults)
+        .set({ environments: newEnvs, updatedAt: new Date() })
+        .where(eq(vaults.id, vault.id));
+
+      // Delete all secrets in this environment
+      await tx
+        .delete(secrets)
+        .where(and(
+          eq(secrets.vaultId, vault.id),
+          eq(secrets.environment, envName)
+        ));
+
+      // Delete environment permissions
+      await tx
+        .delete(environmentPermissions)
+        .where(and(
+          eq(environmentPermissions.vaultId, vault.id),
+          eq(environmentPermissions.environment, envName)
+        ));
+    });
+
+    // Log activity
+    const user = await db.query.users.findFirst({
+      where: eq(users.githubId, githubUser.githubId),
+    });
+    if (user) {
+      await logActivity({
+        userId: user.id,
+        action: 'environment_deleted',
+        platform: detectPlatform(request),
+        vaultId: vault.id,
+        metadata: { environment: envName, repoFullName },
+        ...extractRequestInfo(request),
+      });
+    }
+
+    fastify.log.info({ repoFullName, environment: envName }, 'Environment deleted');
+
+    return sendData(reply, {
+      deleted: envName,
+      environments: newEnvs,
+    }, { requestId: request.id });
   });
 
   // ============================================

@@ -256,6 +256,87 @@ Pull secrets from a vault environment.
 }
 ```
 
+### Environments
+
+Each vault has a list of allowed environments. Secrets can only be pushed to environments that exist in the vault.
+
+#### `GET /v1/vaults/:owner/:repo/environments`
+
+Get the list of environments for a vault.
+
+**Response:**
+```json
+{
+  "data": {
+    "environments": ["local", "dev", "staging", "production"]
+  }
+}
+```
+
+#### `POST /v1/vaults/:owner/:repo/environments` (Admin only)
+
+Create a new environment.
+
+**Request:**
+```json
+{
+  "name": "preview"
+}
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "environment": "preview",
+    "environments": ["local", "dev", "staging", "production", "preview"]
+  }
+}
+```
+
+**Validation:**
+- Name must be 2-30 characters
+- Lowercase letters, numbers, dashes, and underscores only
+- Must start with a letter
+
+#### `PATCH /v1/vaults/:owner/:repo/environments/:name` (Admin only)
+
+Rename an environment. All secrets in that environment are updated.
+
+**Request:**
+```json
+{
+  "newName": "development"
+}
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "oldName": "dev",
+    "newName": "development",
+    "environments": ["local", "development", "staging", "production"]
+  }
+}
+```
+
+#### `DELETE /v1/vaults/:owner/:repo/environments/:name` (Admin only)
+
+Delete an environment and all its secrets.
+
+**Response:**
+```json
+{
+  "data": {
+    "deleted": "preview",
+    "environments": ["local", "dev", "staging", "production"]
+  }
+}
+```
+
+**Note:** Cannot delete the last environment in a vault.
+
 ## Development
 
 ```bash
@@ -368,6 +449,7 @@ See [POSTHOG_CHECKLIST.md](./POSTHOG_CHECKLIST.md) for details.
 {
   id: uuid (PK)
   repoFullName: string (unique)
+  environments: string[] (default: ['local', 'dev', 'staging', 'production'])
   ownerId: uuid (FK → users)
   createdAt: timestamp
   updatedAt: timestamp

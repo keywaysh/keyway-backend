@@ -1,5 +1,6 @@
 import { pgTable, text, integer, timestamp, uuid, pgEnum, decimal, jsonb, boolean } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
+import { DEFAULT_ENVIRONMENTS } from '../types';
 
 // Device flow status enum
 export const deviceCodeStatusEnum = pgEnum('device_code_status', [
@@ -35,6 +36,9 @@ export const activityActionEnum = pgEnum('activity_action', [
   'secret_deleted',
   'secret_rotated',
   'permission_changed',
+  'environment_created',
+  'environment_renamed',
+  'environment_deleted',
 ]);
 
 // Activity platform types
@@ -92,6 +96,8 @@ export const vaults = pgTable('vaults', {
   ownerId: uuid('owner_id').notNull().references(() => users.id),
   // Whether the GitHub repo is private (fetched from GitHub API during creation)
   isPrivate: boolean('is_private').notNull().default(false),
+  // List of environments for this vault (dynamic, user-managed)
+  environments: text('environments').array().notNull().default([...DEFAULT_ENVIRONMENTS]),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

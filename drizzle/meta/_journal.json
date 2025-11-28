@@ -92,6 +92,20 @@
       "when": 1764296935000,
       "tag": "0012_add_refresh_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "5",
+      "when": 1764383200000,
+      "tag": "0013_add_vault_environments",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "5",
+      "when": 1764383800000,
+      "tag": "0014_add_environment_actions",
+      "breakpoints": true
     }
   ]
 }

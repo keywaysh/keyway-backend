@@ -26,6 +26,8 @@ export const mockVault = {
   repoName: 'test-repo',
   repoFullName: 'testuser/test-repo',
   isPrivate: false,
+  environments: ['local', 'dev', 'staging', 'production'],
+  ownerId: mockUser.id,
   createdById: mockUser.id,
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -97,7 +99,7 @@ export function createMockDb(overrides: {
     returning: vi.fn().mockResolvedValue([returnValue]),
   });
 
-  return {
+  const dbMock = {
     query: mockQuery,
     insert: vi.fn().mockReturnValue(createChain(mockUser)),
     update: vi.fn().mockReturnValue(createChain(mockUser)),
@@ -109,7 +111,19 @@ export function createMockDb(overrides: {
         }),
       }),
     }),
+    // Transaction support - execute callback with same mock
+    transaction: vi.fn().mockImplementation(async (callback: (tx: any) => Promise<any>) => {
+      // Create a transaction mock that has the same methods as db
+      const txMock = {
+        update: vi.fn().mockReturnValue(createChain(mockUser)),
+        delete: vi.fn().mockReturnValue(createChain(null)),
+        insert: vi.fn().mockReturnValue(createChain(mockUser)),
+      };
+      return callback(txMock);
+    }),
   };
+
+  return dbMock;
 }
 
 /**

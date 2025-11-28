@@ -4,11 +4,11 @@ import { authenticateGitHub, requireEnvironmentAccess } from '../../../middlewar
 import { db, users, vaults, secrets } from '../../../db';
 import { eq, and, inArray } from 'drizzle-orm';
 import { encrypt, decrypt, sanitizeForLogging } from '../../../utils/encryption';
-import { sendData, NotFoundError } from '../../../lib';
+import { sendData, NotFoundError, BadRequestError } from '../../../lib';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
 import { logActivity, extractRequestInfo, detectPlatform } from '../../../services';
 import { processPullEvent, generateDeviceId } from '../../../services/security.service';
-import { repoFullNameSchema } from '../../../types';
+import { repoFullNameSchema, DEFAULT_ENVIRONMENTS } from '../../../types';
 
 // Security limits for secrets
 const MAX_SECRET_KEY_LENGTH = 256;
@@ -105,6 +105,19 @@ export async function secretsRoutes(fastify: FastifyInstance) {
 
     if (!vault) {
       throw new NotFoundError('Vault not found. Run keyway init first.');
+    }
+
+    // Validate environment exists in vault's environment list
+    const vaultEnvs = vault.environments && vault.environments.length > 0
+      ? vault.environments
+      : [...DEFAULT_ENVIRONMENTS];
+
+    if (!vaultEnvs.includes(body.environment)) {
+      throw new BadRequestError(
+        `Environment '${body.environment}' does not exist in this vault. ` +
+        `Available environments: ${vaultEnvs.join(', ')}. ` +
+        `Create it first via the dashboard or API.`
+      );
     }
 
     const secretEntries = Object.entries(body.secrets);

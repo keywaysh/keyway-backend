@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
 // ============================================
+// Shared Constants
+// ============================================
+
+// Default environments for new vaults
+export const DEFAULT_ENVIRONMENTS = ['local', 'dev', 'staging', 'production'] as const;
+
+// ============================================
 // Shared Validation Patterns
 // ============================================
 

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { db, users, deviceCodes } from '../../../db';
 import { eq } from 'drizzle-orm';
 import { exchangeCodeForToken, getUserFromToken } from '../../../utils/github';
-import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
+import { trackEvent, identifyUser, AnalyticsEvents, getSignupSource } from '../../../utils/analytics';
 import { generateDeviceCode, generateUserCode, DEVICE_FLOW_CONFIG } from '../../../utils/deviceCodes';
 import { generateKeywayToken, getTokenExpiresAt } from '../../../utils/jwt';
 import { config } from '../../../config';
@@ -103,11 +103,29 @@ export async function authRoutes(fastify: FastifyInstance) {
           username: user.username,
         });
 
+        const signupSource = isNewUser ? getSignupSource(request.headers.referer) : undefined;
+
         trackEvent(user.id, AnalyticsEvents.AUTH_SUCCESS, {
           username: githubUser.username,
           method: 'web_oauth',
           isNewUser,
+          signupSource,
         });
+
+        if (isNewUser) {
+          trackEvent(user.id, AnalyticsEvents.USER_CREATED, {
+            username: githubUser.username,
+            signupSource,
+            method: 'web_oauth',
+          });
+
+          identifyUser(user.id, {
+            username: user.username,
+            plan: user.plan,
+            signupSource,
+            signupTimestamp: user.createdAt.toISOString(),
+          });
+        }
 
         const isProduction = config.server.isProduction;
         const maxAge = 30 * 24 * 60 * 60;
@@ -172,7 +190,23 @@ export async function authRoutes(fastify: FastifyInstance) {
         trackEvent(user.id, AnalyticsEvents.AUTH_SUCCESS, {
           username: githubUser.username,
           method: 'device_flow',
+          isNewUser,
         });
+
+        if (isNewUser) {
+          trackEvent(user.id, AnalyticsEvents.USER_CREATED, {
+            username: githubUser.username,
+            signupSource: 'cli',
+            method: 'device_flow',
+          });
+
+          identifyUser(user.id, {
+            username: user.username,
+            plan: user.plan,
+            signupSource: 'cli',
+            signupTimestamp: user.createdAt.toISOString(),
+          });
+        }
 
         return reply.type('text/html').send(renderSuccessPage(user.username));
       } else {

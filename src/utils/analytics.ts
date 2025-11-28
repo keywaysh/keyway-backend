@@ -65,6 +65,25 @@ function sanitizeProperties(properties: Record<string, any>): Record<string, any
 }
 
 /**
+ * Identify a user in PostHog with their properties
+ * Used for user property enrichment (signup source, timestamps, etc.)
+ */
+export function identifyUser(
+  distinctId: string,
+  properties: Record<string, any>
+) {
+  if (!posthog) return;
+
+  // Sanitize properties
+  const sanitizedProperties = sanitizeProperties(properties);
+
+  posthog.identify({
+    distinctId,
+    properties: sanitizedProperties,
+  });
+}
+
+/**
  * Shutdown PostHog client gracefully
  */
 export async function shutdownAnalytics() {
@@ -80,5 +99,43 @@ export const AnalyticsEvents = {
   SECRETS_PULLED: 'api_secrets_pulled',
   AUTH_SUCCESS: 'api_auth_success',
   AUTH_FAILURE: 'api_auth_failure',
+  USER_CREATED: 'api_user_created',
   API_ERROR: 'api_error',
 } as const;
+
+/**
+ * Determine signup source from referer header
+ */
+export function getSignupSource(referer: string | undefined): string {
+  if (!referer) return 'direct';
+
+  try {
+    const url = new URL(referer);
+    const hostname = url.hostname.toLowerCase();
+    const pathname = url.pathname.toLowerCase();
+
+    // Badge embed from README
+    if (pathname.includes('badge')) return 'badge';
+
+    // GitHub README or docs
+    if (hostname.includes('github.com') || hostname.includes('githubusercontent.com')) {
+      return 'github';
+    }
+
+    // NPM page
+    if (hostname.includes('npmjs.com') || hostname.includes('npm.io')) {
+      return 'npm';
+    }
+
+    // Our own landing page
+    if (hostname.includes('keyway.sh')) {
+      if (pathname === '/' || pathname === '') return 'landing';
+      if (pathname.includes('login')) return 'login';
+      return 'site';
+    }
+
+    return 'referrer';
+  } catch {
+    return 'direct';
+  }
+}

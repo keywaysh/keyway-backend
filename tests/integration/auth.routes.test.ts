@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
+import cookie from '@fastify/cookie';
 import { mockUser, mockDeviceCode, createMockDb, createMockGitHubUtils } from '../helpers/mocks';
 
 // Mock the database module
@@ -40,6 +41,7 @@ describe('Auth Routes', () => {
     // Create fresh app for each test
     app = Fastify({ logger: false });
     await app.register(formbody);
+    await app.register(cookie);
 
     // Import and register auth routes after mocks are set up
     const { authRoutes } = await import('../../src/api/v1/routes/auth.routes');
@@ -187,6 +189,32 @@ describe('Auth Routes', () => {
       expect(response.statusCode).toBe(403);
       const body = JSON.parse(response.body);
       expect(body.status).toBe('denied');
+    });
+
+    it('should reject approved device codes that have expired (HIGH-2 security fix)', async () => {
+      const { db } = await import('../../src/db');
+      // Mock an approved device code that has expired
+      (db.query.deviceCodes.findFirst as any).mockResolvedValue({
+        ...mockDeviceCode,
+        status: 'approved',
+        userId: mockUser.id,
+        user: mockUser,
+        expiresAt: new Date(Date.now() - 1000), // Expired 1 second ago
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/auth/device/poll',
+        payload: {
+          deviceCode: 'DEVICE123456',
+        },
+      });
+
+      // Should reject with expired status, not return token
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.status).toBe('expired');
+      expect(body).not.toHaveProperty('keywayToken');
     });
   });
 

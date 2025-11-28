@@ -4,6 +4,7 @@ import { authenticateGitHub, requireAdminAccess } from '../../../middleware/auth
 import { db, users, vaults, secrets, environmentPermissions } from '../../../db';
 import { eq, and } from 'drizzle-orm';
 import { getVaultPermissions, getDefaultPermission } from '../../../utils/permissions';
+import { encryptAccessToken } from '../../../utils/tokenEncryption';
 import type { CollaboratorRole } from '../../../db/schema';
 import { sendData, sendPaginatedData, sendCreated, sendNoContent, NotFoundError, ForbiddenError, ConflictError, buildPaginationMeta, parsePagination } from '../../../lib';
 import { PlanLimitError } from '../../../errors';
@@ -13,6 +14,7 @@ import {
   getVaultByRepoInternal,
   touchVault,
   getSecretsForVault,
+  getSecretsCount,
   upsertSecret,
   updateSecret,
   deleteSecret,
@@ -27,24 +29,32 @@ import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
 import { repoFullNameSchema } from '../../../types';
 import { getSecurityAlerts } from '../../../services/security.service';
 
+// Security limits for secrets
+const MAX_SECRET_KEY_LENGTH = 256;
+const MAX_SECRET_VALUE_SIZE = 64 * 1024; // 64KB
+
 // Schemas
 const CreateVaultSchema = z.object({
   repoFullName: repoFullNameSchema,
 });
 
 const UpsertSecretSchema = z.object({
-  key: z.string().min(1).max(255).regex(/^[A-Z][A-Z0-9_]*$/, {
+  key: z.string().min(1).max(MAX_SECRET_KEY_LENGTH).regex(/^[A-Z][A-Z0-9_]*$/, {
     message: 'Key must be uppercase with underscores (e.g., DATABASE_URL)',
   }),
-  value: z.string(),
+  value: z.string().max(MAX_SECRET_VALUE_SIZE, {
+    message: `Secret value must not exceed ${MAX_SECRET_VALUE_SIZE} bytes (64KB)`,
+  }),
   environment: z.string().min(1).max(50).default('default'),
 });
 
 const PatchSecretSchema = z.object({
-  name: z.string().min(1).max(255).regex(/^[A-Z][A-Z0-9_]*$/, {
+  name: z.string().min(1).max(MAX_SECRET_KEY_LENGTH).regex(/^[A-Z][A-Z0-9_]*$/, {
     message: 'Key must be uppercase with underscores (e.g., DATABASE_URL)',
   }).optional(),
-  value: z.string().optional(),
+  value: z.string().max(MAX_SECRET_VALUE_SIZE, {
+    message: `Secret value must not exceed ${MAX_SECRET_VALUE_SIZE} bytes (64KB)`,
+  }).optional(),
 }).refine(data => data.name !== undefined || data.value !== undefined, {
   message: 'At least one of name or value must be provided',
 });
@@ -127,6 +137,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     });
 
     if (!user) {
+      const encryptedToken = encryptAccessToken(accessToken);
       const [newUser] = await db
         .insert(users)
         .values({
@@ -134,7 +145,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
           username: githubUser.username,
           email: githubUser.email,
           avatarUrl: githubUser.avatarUrl,
-          accessToken,
+          ...encryptedToken,
         })
         .returning();
       user = newUser;
@@ -299,15 +310,19 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       throw new ForbiddenError('You do not have access to this vault');
     }
 
-    const secrets = await getSecretsForVault(vault.id);
-
-    // Apply pagination
-    const paginatedSecrets = secrets.slice(pagination.offset, pagination.offset + pagination.limit);
+    // Get total count and paginated secrets efficiently
+    const [totalCount, paginatedSecrets] = await Promise.all([
+      getSecretsCount(vault.id),
+      getSecretsForVault(vault.id, {
+        limit: pagination.limit,
+        offset: pagination.offset,
+      }),
+    ]);
 
     return sendPaginatedData(
       reply,
       paginatedSecrets,
-      buildPaginationMeta(pagination, secrets.length, paginatedSecrets.length),
+      buildPaginationMeta(pagination, totalCount, paginatedSecrets.length),
       { requestId: request.id }
     );
   });

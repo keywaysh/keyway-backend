@@ -74,7 +74,10 @@ export const users = pgTable('users', {
   username: text('username').notNull(),
   email: text('email'),
   avatarUrl: text('avatar_url'),
-  accessToken: text('access_token').notNull(),
+  // Encrypted GitHub access token (AES-256-GCM)
+  encryptedAccessToken: text('encrypted_access_token').notNull(),
+  accessTokenIv: text('access_token_iv').notNull(),
+  accessTokenAuthTag: text('access_token_auth_tag').notNull(),
   // Plan and billing fields
   plan: userPlanEnum('plan').notNull().default('free'),
   billingStatus: billingStatusEnum('billing_status').default('active'),
@@ -115,6 +118,19 @@ export const deviceCodes = pgTable('device_codes', {
   suggestedRepository: text('suggested_repository'), // Optional repo suggested by CLI
   expiresAt: timestamp('expires_at').notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+export const refreshTokens = pgTable('refresh_tokens', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  token: text('token').notNull().unique(),
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  lastUsedAt: timestamp('last_used_at'),
+  // Device/client information for tracking
+  deviceId: text('device_id'),
+  userAgent: text('user_agent'),
+  ipAddress: text('ip_address'),
 });
 
 export const environmentPermissions = pgTable('environment_permissions', {
@@ -181,6 +197,7 @@ export const usageMetrics = pgTable('usage_metrics', {
 export const usersRelations = relations(users, ({ many, one }) => ({
   vaults: many(vaults),
   deviceCodes: many(deviceCodes),
+  refreshTokens: many(refreshTokens),
   activityLogs: many(activityLogs),
   pullEvents: many(pullEvents),
   securityAlerts: many(securityAlerts),
@@ -216,6 +233,13 @@ export const secretsRelations = relations(secrets, ({ one }) => ({
 export const deviceCodesRelations = relations(deviceCodes, ({ one }) => ({
   user: one(users, {
     fields: [deviceCodes.userId],
+    references: [users.id],
+  }),
+}));
+
+export const refreshTokensRelations = relations(refreshTokens, ({ one }) => ({
+  user: one(users, {
+    fields: [refreshTokens.userId],
     references: [users.id],
   }),
 }));
@@ -273,6 +297,8 @@ export type Secret = typeof secrets.$inferSelect;
 export type NewSecret = typeof secrets.$inferInsert;
 export type DeviceCode = typeof deviceCodes.$inferSelect;
 export type NewDeviceCode = typeof deviceCodes.$inferInsert;
+export type RefreshToken = typeof refreshTokens.$inferSelect;
+export type NewRefreshToken = typeof refreshTokens.$inferInsert;
 export type EnvironmentPermission = typeof environmentPermissions.$inferSelect;
 export type NewEnvironmentPermission = typeof environmentPermissions.$inferInsert;
 export type ActivityLog = typeof activityLogs.$inferSelect;

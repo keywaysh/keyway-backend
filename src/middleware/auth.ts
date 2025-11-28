@@ -2,6 +2,7 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { UnauthorizedError, ForbiddenError } from '../errors';
 import { getUserFromToken, hasRepoAccess, hasAdminAccess, getUserRole } from '../utils/github';
 import { verifyKeywayToken } from '../utils/jwt';
+import { decryptAccessToken } from '../utils/tokenEncryption';
 import { db, users, vaults } from '../db';
 import { eq } from 'drizzle-orm';
 import { hasEnvironmentPermission } from '../utils/permissions';
@@ -66,8 +67,12 @@ export async function authenticateGitHub(
     }
 
     // Attach to request for use in route handlers
-    // Use the GitHub access token stored in DB for API calls
-    request.accessToken = user.accessToken;
+    // Decrypt the GitHub access token stored in DB for API calls
+    request.accessToken = decryptAccessToken({
+      encryptedAccessToken: user.encryptedAccessToken,
+      accessTokenIv: user.accessTokenIv,
+      accessTokenAuthTag: user.accessTokenAuthTag,
+    });
     request.githubUser = {
       githubId: user.githubId,
       username: user.username,

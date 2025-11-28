@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import formbody from '@fastify/formbody';
+import cookie from '@fastify/cookie';
 import { ZodError } from 'zod';
 import { config } from './config';
 import { AppError } from './errors';
@@ -10,6 +11,7 @@ import { ApiError } from './lib';
 import { apiV1Routes } from './api/v1';
 import { initAnalytics, shutdownAnalytics, trackEvent, AnalyticsEvents } from './utils/analytics';
 import { sql as dbConnection } from './db';
+import { sanitizeError, sanitizeHeaders } from './utils/logger';
 
 // Create Fastify instance
 const fastify = Fastify({
@@ -63,6 +65,9 @@ fastify.register(cors, {
 // Register form body parser (for HTML forms)
 fastify.register(formbody);
 
+// Register cookie parser
+fastify.register(cookie);
+
 // Add request ID to all responses
 fastify.addHook('onSend', async (request, reply) => {
   reply.header('X-Request-ID', request.id);
@@ -97,12 +102,13 @@ fastify.register(apiV1Routes, { prefix: '/v1' });
 
 // Global error handler
 fastify.setErrorHandler((error: Error & { statusCode?: number; validation?: unknown }, request, reply) => {
-  // Log error with context
+  // Log error with context - sanitize to prevent token exposure
   fastify.log.error({
-    err: error,
+    err: sanitizeError(error),
     url: request.url,
     method: request.method,
     reqId: request.id,
+    headers: sanitizeHeaders(request.headers),
   }, 'Request error');
 
   // Track error in analytics

@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
+import crypto from 'crypto';
 
 /**
  * Payload for Keyway JWT tokens
@@ -11,14 +12,31 @@ export interface KeywayTokenPayload {
 }
 
 /**
- * Generate a Keyway JWT token for device flow authentication
+ * Generate a Keyway JWT access token
  */
 export function generateKeywayToken(payload: KeywayTokenPayload): string {
   return jwt.sign(payload, config.jwt.secret, {
-    expiresIn: config.jwt.expiresIn,
+    algorithm: 'HS256',
+    expiresIn: config.jwt.accessTokenExpiresIn,
     issuer: 'keyway-api',
     subject: payload.userId,
   });
+}
+
+/**
+ * Generate a secure refresh token (opaque token, not JWT)
+ * Returns a cryptographically random string
+ */
+export function generateRefreshToken(): string {
+  return crypto.randomBytes(64).toString('base64url');
+}
+
+/**
+ * Calculate refresh token expiration date
+ */
+export function getRefreshTokenExpiresAt(): Date {
+  const expiresInDays = parseInt(config.jwt.refreshTokenExpiresIn);
+  return new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
 }
 
 /**
@@ -28,6 +46,7 @@ export function generateKeywayToken(payload: KeywayTokenPayload): string {
 export function verifyKeywayToken(token: string): KeywayTokenPayload {
   try {
     const decoded = jwt.verify(token, config.jwt.secret, {
+      algorithms: ['HS256'],
       issuer: 'keyway-api',
     }) as jwt.JwtPayload;
 

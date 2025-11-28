@@ -9,6 +9,8 @@ import { generateKeywayToken, getTokenExpiresAt } from '../../../utils/jwt';
 import { config } from '../../../config';
 import { NotFoundError } from '../../../lib';
 import { authenticateGitHub } from '../../../middleware/auth';
+import { encryptAccessToken } from '../../../utils/tokenEncryption';
+import { signState, verifyState } from '../../../utils/state';
 
 // Schemas
 const DeviceFlowStartSchema = z.object({
@@ -32,6 +34,8 @@ async function upsertUser(githubUser: { githubId: number; username: string; emai
     where: eq(users.githubId, githubUser.githubId),
   });
 
+  const encryptedToken = encryptAccessToken(accessToken);
+
   if (existingUser) {
     const [updatedUser] = await db
       .update(users)
@@ -39,7 +43,7 @@ async function upsertUser(githubUser: { githubId: number; username: string; emai
         username: githubUser.username,
         email: githubUser.email,
         avatarUrl: githubUser.avatarUrl,
-        accessToken,
+        ...encryptedToken,
         updatedAt: new Date(),
       })
       .where(eq(users.githubId, githubUser.githubId))
@@ -54,7 +58,7 @@ async function upsertUser(githubUser: { githubId: number; username: string; emai
       username: githubUser.username,
       email: githubUser.email,
       avatarUrl: githubUser.avatarUrl,
-      accessToken,
+      ...encryptedToken,
     })
     .returning();
   return { user: newUser, isNewUser: true };
@@ -91,7 +95,14 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
 
     try {
-      const stateData = JSON.parse(Buffer.from(query.state, 'base64').toString());
+      // Verify signed state to prevent CSRF attacks (CRIT-2 fix)
+      const stateData = verifyState(query.state);
+      if (!stateData) {
+        return reply.status(400).send({
+          error: 'InvalidState',
+          message: 'Invalid or tampered state parameter',
+        });
+      }
       const accessToken = await exchangeCodeForToken(query.code);
       const githubUser = await getUserFromToken(accessToken);
       const { user, isNewUser } = await upsertUser(githubUser, accessToken);
@@ -128,55 +139,41 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
 
         const isProduction = config.server.isProduction;
-        const maxAge = 30 * 24 * 60 * 60;
+        const maxAge = 30 * 24 * 60 * 60; // 30 days in seconds
 
-        const cookieParts = [
-          `keyway_session=${keywayToken}`,
-          'Path=/',
-          'HttpOnly',
-          'SameSite=Lax',
-          `Max-Age=${maxAge}`,
-        ];
+        // Determine domain for cookie
+        const host = (request.headers.host || '').split(':')[0];
+        const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
+        let domain: string | undefined;
 
-        if (isProduction) {
-          cookieParts.push('Secure');
-          const host = (request.headers.host || '').split(':')[0];
-          const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
-          if (!isLocalhost) {
-            const parts = host.split('.');
-            if (parts.length >= 2) {
-              const rootDomain = parts.slice(-2).join('.');
-              cookieParts.push(`Domain=.${rootDomain}`);
-            }
+        if (isProduction && !isLocalhost) {
+          const parts = host.split('.');
+          if (parts.length >= 2) {
+            domain = `.${parts.slice(-2).join('.')}`;
           }
         }
 
-        const flagCookieParts = [
-          'keyway_logged_in=true',
-          'Path=/',
-          'SameSite=Lax',
-          `Max-Age=${maxAge}`,
-        ];
+        // Set session cookie with all security flags
+        reply.setCookie('keyway_session', keywayToken, {
+          path: '/',
+          httpOnly: true, // Prevent XSS access
+          secure: isProduction, // HTTPS only in production
+          sameSite: 'lax', // CSRF protection
+          maxAge,
+          domain,
+        });
 
-        if (isProduction) {
-          flagCookieParts.push('Secure');
-          const host = (request.headers.host || '').split(':')[0];
-          const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
-          if (!isLocalhost) {
-            const parts = host.split('.');
-            if (parts.length >= 2) {
-              const rootDomain = parts.slice(-2).join('.');
-              flagCookieParts.push(`Domain=.${rootDomain}`);
-            }
-          }
-        }
+        // Set flag cookie (readable by JavaScript for client-side auth status)
+        reply.setCookie('keyway_logged_in', 'true', {
+          path: '/',
+          httpOnly: false, // Intentionally false - needed for client-side checks
+          secure: isProduction,
+          sameSite: 'lax',
+          maxAge,
+          domain,
+        });
 
-        reply.header('Set-Cookie', [
-          cookieParts.join('; '),
-          flagCookieParts.join('; '),
-        ]);
-
-        const redirectUrl = stateData.redirectUri || (isProduction ? 'https://keyway.sh/dashboard' : 'http://localhost:5173/dashboard');
+        const redirectUrl = (stateData.redirectUri as string | null) || (isProduction ? 'https://keyway.sh/dashboard' : 'http://localhost:5173/dashboard');
         return reply.redirect(redirectUrl);
       } else if (stateData.deviceCodeId) {
         await db
@@ -185,7 +182,7 @@ export async function authRoutes(fastify: FastifyInstance) {
             status: 'approved',
             userId: user.id,
           })
-          .where(eq(deviceCodes.id, stateData.deviceCodeId));
+          .where(eq(deviceCodes.id, stateData.deviceCodeId as string));
 
         trackEvent(user.id, AnalyticsEvents.AUTH_SUCCESS, {
           username: githubUser.username,
@@ -260,10 +257,11 @@ export async function authRoutes(fastify: FastifyInstance) {
       }
     }
 
-    const state = Buffer.from(JSON.stringify({
+    // Sign state with HMAC to prevent CSRF attacks (CRIT-2 fix)
+    const state = signState({
       type: 'web',
       redirectUri: redirectUri || null,
-    })).toString('base64');
+    });
 
     const callbackUri = buildCallbackUrl(request);
 
@@ -390,8 +388,16 @@ export async function authRoutes(fastify: FastifyInstance) {
   /**
    * POST /device/verify
    * Submit device verification
+   * Rate limited to 5 requests per minute to prevent brute force (CRIT-3 fix)
    */
-  fastify.post('/device/verify', async (request, reply) => {
+  fastify.post('/device/verify', {
+    config: {
+      rateLimit: {
+        max: 5,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (request, reply) => {
     const body = request.body as { user_code: string };
     const userCode = body.user_code.trim().toUpperCase();
 
@@ -407,7 +413,8 @@ export async function authRoutes(fastify: FastifyInstance) {
       return reply.type('text/html').send(renderErrorPage('Code Expired', 'This verification code has expired. Please restart the authentication flow.'));
     }
 
-    const state = Buffer.from(JSON.stringify({ deviceCodeId: deviceCodeRecord.id })).toString('base64');
+    // Sign state with HMAC to prevent CSRF attacks (CRIT-2 fix)
+    const state = signState({ deviceCodeId: deviceCodeRecord.id });
     const callbackUri = buildCallbackUrl(request);
 
     const githubAuthUrl = new URL('https://github.com/login/oauth/authorize');
@@ -439,43 +446,35 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.post('/logout', async (request, reply) => {
     const isProduction = config.server.isProduction;
 
-    // Build cookie clearing parts
-    const clearSessionParts = [
-      'keyway_session=',
-      'Path=/',
-      'HttpOnly',
-      'SameSite=Lax',
-      'Max-Age=0',
-    ];
+    // Determine domain for cookie
+    const host = (request.headers.host || '').split(':')[0];
+    const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
+    let domain: string | undefined;
 
-    const clearFlagParts = [
-      'keyway_logged_in=',
-      'Path=/',
-      'SameSite=Lax',
-      'Max-Age=0',
-    ];
-
-    if (isProduction) {
-      clearSessionParts.push('Secure');
-      clearFlagParts.push('Secure');
-
-      const host = (request.headers.host || '').split(':')[0];
-      const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
-
-      if (!isLocalhost) {
-        const parts = host.split('.');
-        if (parts.length >= 2) {
-          const rootDomain = parts.slice(-2).join('.');
-          clearSessionParts.push(`Domain=.${rootDomain}`);
-          clearFlagParts.push(`Domain=.${rootDomain}`);
-        }
+    if (isProduction && !isLocalhost) {
+      const parts = host.split('.');
+      if (parts.length >= 2) {
+        domain = `.${parts.slice(-2).join('.')}`;
       }
     }
 
-    reply.header('Set-Cookie', [
-      clearSessionParts.join('; '),
-      clearFlagParts.join('; '),
-    ]);
+    // Clear session cookie with same security flags
+    reply.clearCookie('keyway_session', {
+      path: '/',
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax',
+      domain,
+    });
+
+    // Clear flag cookie
+    reply.clearCookie('keyway_logged_in', {
+      path: '/',
+      httpOnly: false,
+      secure: isProduction,
+      sameSite: 'lax',
+      domain,
+    });
 
     return { success: true, message: 'Logged out successfully' };
   });

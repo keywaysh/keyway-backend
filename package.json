@@ -26,6 +26,7 @@
   "author": "Nicolas Ritouet",
   "license": "MIT",
   "dependencies": {
+    "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.1.0",
     "@fastify/formbody": "^8.0.2",
     "@fastify/helmet": "^13.0.2",

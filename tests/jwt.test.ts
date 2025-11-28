@@ -146,9 +146,9 @@ describe('JWT Utils (Security Critical)', () => {
       const token = generateKeywayToken(validPayload);
       const expiresAt = getTokenExpiresAt(token);
 
-      // Token expires in ~30 days (config default)
-      const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
-      const expectedExpiry = now + thirtyDaysMs;
+      // Token expires in ~7 days (config default for access tokens)
+      const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+      const expectedExpiry = now + sevenDaysMs;
 
       // Allow 10 second tolerance
       expect(Math.abs(expiresAt.getTime() - expectedExpiry)).toBeLessThan(10000);

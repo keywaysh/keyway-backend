@@ -79,7 +79,8 @@ export const config = {
 
   jwt: {
     secret: env.JWT_SECRET,
-    expiresIn: '30d', // 30 days for device flow tokens
+    accessTokenExpiresIn: '7d', // 7 days for access tokens
+    refreshTokenExpiresIn: '90d', // 90 days for refresh tokens
   },
 
   github: {

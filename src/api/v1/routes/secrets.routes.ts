@@ -10,16 +10,35 @@ import { logActivity, extractRequestInfo, detectPlatform } from '../../../servic
 import { processPullEvent, generateDeviceId } from '../../../services/security.service';
 import { repoFullNameSchema } from '../../../types';
 
+// Security limits for secrets
+const MAX_SECRET_KEY_LENGTH = 256;
+const MAX_SECRET_VALUE_SIZE = 64 * 1024; // 64KB
+const MAX_SECRETS_PER_PUSH = 1000; // Maximum secrets per push operation
+
 // Schemas
 const PushSecretsSchema = z.object({
   repoFullName: repoFullNameSchema,
   environment: z.string().min(1).max(50).default('default'),
-  secrets: z.record(z.string()), // { KEY: "value", KEY2: "value2" }
+  secrets: z.record(
+    z.string().max(MAX_SECRET_KEY_LENGTH, {
+      message: `Secret key must not exceed ${MAX_SECRET_KEY_LENGTH} characters`,
+    }),
+    z.string().max(MAX_SECRET_VALUE_SIZE, {
+      message: `Secret value must not exceed ${MAX_SECRET_VALUE_SIZE} bytes (64KB)`,
+    })
+  ).refine(
+    (secrets) => Object.keys(secrets).length <= MAX_SECRETS_PER_PUSH,
+    {
+      message: `Cannot push more than ${MAX_SECRETS_PER_PUSH} secrets at once`,
+    }
+  ),
 });
 
 const PullSecretsQuerySchema = z.object({
   repo: z.string(),
   environment: z.string().default('default'),
+  limit: z.coerce.number().int().min(1).max(1000).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 /**
@@ -208,15 +227,34 @@ export async function secretsRoutes(fastify: FastifyInstance) {
       throw new NotFoundError('Vault not found');
     }
 
-    const envSecrets = await db.query.secrets.findMany({
+    // Fetch secrets with optional pagination
+    const queryOptions: any = {
       where: and(
         eq(secrets.vaultId, vault.id),
         eq(secrets.environment, environment)
       ),
-    });
+    };
+
+    if (query.limit !== undefined) {
+      queryOptions.limit = query.limit;
+      if (query.offset !== undefined) {
+        queryOptions.offset = query.offset;
+      }
+    }
+
+    const envSecrets = await db.query.secrets.findMany(queryOptions);
 
     if (envSecrets.length === 0) {
       throw new NotFoundError(`No secrets found for environment: ${environment}`);
+    }
+
+    // Log warning for large unpaginated pulls
+    if (!query.limit && envSecrets.length > 100) {
+      fastify.log.warn({
+        repoFullName,
+        environment,
+        secretCount: envSecrets.length,
+      }, 'Large unpaginated secret pull detected');
     }
 
     // Decrypt and build content

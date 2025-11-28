@@ -1,5 +1,5 @@
 import { db, secrets } from '../db';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, count } from 'drizzle-orm';
 import { encrypt } from '../utils/encryption';
 
 export interface SecretListItem {
@@ -23,13 +23,25 @@ export interface UpdateSecretInput {
 }
 
 /**
- * Get all secrets for a vault
+ * Get all secrets for a vault (with optional pagination)
  */
-export async function getSecretsForVault(vaultId: string): Promise<SecretListItem[]> {
-  const vaultSecrets = await db.query.secrets.findMany({
+export async function getSecretsForVault(
+  vaultId: string,
+  options?: { limit?: number; offset?: number }
+): Promise<SecretListItem[]> {
+  const queryOptions: any = {
     where: eq(secrets.vaultId, vaultId),
     orderBy: [desc(secrets.updatedAt)],
-  });
+  };
+
+  if (options?.limit !== undefined) {
+    queryOptions.limit = options.limit;
+  }
+  if (options?.offset !== undefined) {
+    queryOptions.offset = options.offset;
+  }
+
+  const vaultSecrets = await db.query.secrets.findMany(queryOptions);
 
   return vaultSecrets.map((secret) => ({
     id: secret.id,
@@ -184,4 +196,16 @@ export async function getSecretById(
     createdAt: secret.createdAt.toISOString(),
     updatedAt: secret.updatedAt.toISOString(),
   };
+}
+
+/**
+ * Get total count of secrets for a vault
+ */
+export async function getSecretsCount(vaultId: string): Promise<number> {
+  const result = await db
+    .select({ count: count() })
+    .from(secrets)
+    .where(eq(secrets.vaultId, vaultId));
+
+  return result[0]?.count ?? 0;
 }

@@ -11,6 +11,7 @@ export {
 // Secret service
 export {
   getSecretsForVault,
+  getSecretsCount,
   upsertSecret,
   updateSecret,
   deleteSecret,

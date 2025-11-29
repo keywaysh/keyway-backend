@@ -15,11 +15,8 @@ const envSchema = z.object({
   // Database
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
-  // Encryption
-  ENCRYPTION_KEY: z
-    .string()
-    .length(64, 'ENCRYPTION_KEY must be 64 hex characters (32 bytes)')
-    .regex(/^[0-9a-f]+$/i, 'ENCRYPTION_KEY must be hexadecimal'),
+  // Encryption (remote crypto service)
+  CRYPTO_SERVICE_URL: z.string().min(1, 'CRYPTO_SERVICE_URL is required (e.g., localhost:50051)'),
 
   // JWT for Keyway tokens
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
@@ -73,11 +70,8 @@ export const config = {
     url: env.DATABASE_URL,
   },
 
-  encryption: {
-    key: Buffer.from(env.ENCRYPTION_KEY, 'hex'),
-    algorithm: 'aes-256-gcm' as const,
-    ivLength: 16,
-    authTagLength: 16,
+  crypto: {
+    serviceUrl: env.CRYPTO_SERVICE_URL,
   },
 
   jwt: {

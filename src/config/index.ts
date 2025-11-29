@@ -41,6 +41,9 @@ const envSchema = z.object({
 
   // Security detection (optional - ipinfo.io works without token for 50k req/month)
   IPINFO_TOKEN: z.string().optional(),
+
+  // Email (Resend)
+  RESEND_API_KEY: z.string().optional(),
 });
 
 // Validate environment variables
@@ -103,6 +106,12 @@ export const config = {
 
   security: {
     ipinfoToken: env.IPINFO_TOKEN,
+  },
+
+  email: {
+    resendApiKey: env.RESEND_API_KEY,
+    enabled: !!env.RESEND_API_KEY,
+    fromAddress: 'Keyway <hello@keyway.sh>',
   },
 } as const;
 

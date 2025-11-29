@@ -11,6 +11,7 @@ import { NotFoundError } from '../../../lib';
 import { authenticateGitHub } from '../../../middleware/auth';
 import { encryptAccessToken } from '../../../utils/tokenEncryption';
 import { signState, verifyState } from '../../../utils/state';
+import { sendWelcomeEmail } from '../../../utils/email';
 
 // Schemas
 const DeviceFlowStartSchema = z.object({
@@ -136,6 +137,11 @@ export async function authRoutes(fastify: FastifyInstance) {
             signupSource,
             signupTimestamp: user.createdAt.toISOString(),
           });
+
+          // Send welcome email (fire and forget)
+          if (user.email) {
+            sendWelcomeEmail({ to: user.email, username: user.username });
+          }
         }
 
         const isProduction = config.server.isProduction;
@@ -217,6 +223,11 @@ export async function authRoutes(fastify: FastifyInstance) {
             signupSource: 'cli',
             signupTimestamp: user.createdAt.toISOString(),
           });
+
+          // Send welcome email (fire and forget)
+          if (user.email) {
+            sendWelcomeEmail({ to: user.email, username: user.username });
+          }
         }
 
         return reply.type('text/html').send(renderSuccessPage(user.username));

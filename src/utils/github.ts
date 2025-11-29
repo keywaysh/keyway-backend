@@ -22,6 +22,7 @@ interface GitHubRepo {
   private?: boolean;
   owner?: {
     login: string;
+    type?: 'User' | 'Organization';
   };
   permissions?: {
     pull?: boolean;
@@ -316,13 +317,13 @@ export async function getUserFromToken(accessToken: string) {
 }
 
 /**
- * Get repository info including visibility (public/private)
+ * Get repository info including visibility (public/private) and ownership type
  * Returns null if repo doesn't exist or user doesn't have access
  */
 export async function getRepoInfo(
   accessToken: string,
   repoFullName: string
-): Promise<{ isPrivate: boolean } | null> {
+): Promise<{ isPrivate: boolean; isOrganization: boolean } | null> {
   const [owner, repo] = repoFullName.split('/');
 
   try {
@@ -340,6 +341,7 @@ export async function getRepoInfo(
     const data = (await response.json()) as GitHubRepo;
     return {
       isPrivate: data.private === true,
+      isOrganization: data.owner?.type === 'Organization',
     };
   } catch {
     return null;

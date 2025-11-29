@@ -169,7 +169,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     }
 
     // Check plan limits before creating vault
-    const limitCheck = await checkVaultCreationAllowed(user.id, user.plan, repoInfo.isPrivate);
+    const limitCheck = await checkVaultCreationAllowed(user.id, user.plan, repoInfo.isPrivate, repoInfo.isOrganization);
     if (!limitCheck.allowed) {
       throw new PlanLimitError(limitCheck.reason!);
     }

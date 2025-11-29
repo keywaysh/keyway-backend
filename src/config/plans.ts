@@ -46,8 +46,18 @@ export function canCreateRepo(
   plan: UserPlan,
   currentPublicCount: number,
   currentPrivateCount: number,
-  isPrivate: boolean
+  isPrivate: boolean,
+  isOrganization: boolean
 ): { allowed: boolean; reason?: string } {
+  // Block PRIVATE organization repos for free/pro plans
+  // Public org repos are allowed for all plans
+  if (isOrganization && isPrivate && plan !== 'team') {
+    return {
+      allowed: false,
+      reason: 'Private organization repositories require a Team plan. Upgrade to use private repos from GitHub organizations.',
+    };
+  }
+
   const limits = getPlanLimits(plan);
 
   if (isPrivate) {

@@ -544,5 +544,6 @@ MIT
 
 ## Support
 
+- **Status**: https://status.keyway.sh
 - **Issues**: Create an issue on GitHub
 - **Documentation**: See [DEPLOYMENT_RAILWAY.md](./DEPLOYMENT_RAILWAY.md) and [POSTHOG_CHECKLIST.md](./POSTHOG_CHECKLIST.md)

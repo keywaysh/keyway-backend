@@ -29,8 +29,13 @@ import { and } from 'drizzle-orm';
 
 // Allowed redirect origins for OAuth callbacks
 const ALLOWED_REDIRECT_ORIGINS = [
+  // Production
   'https://keyway.sh',
-  'https://app.keyway.sh',
+  'https://api.keyway.sh',
+  // Test/Staging
+  'https://keyway.cloud',
+  'https://api.keyway.cloud',
+  // Local development
   'http://localhost:3000',
   'http://localhost:5173',
 ];

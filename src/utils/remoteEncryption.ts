@@ -34,21 +34,62 @@ interface HealthResponse {
   version: string;
 }
 
-class CryptoServiceError extends Error {
+export class CryptoServiceError extends Error {
   constructor(
     message: string,
     public readonly operation: 'encrypt' | 'decrypt' | 'healthcheck',
     public readonly serviceUrl: string,
-    public readonly cause?: Error
+    public readonly cause?: Error,
+    public readonly isRetryable: boolean = false
   ) {
     super(message);
     this.name = 'CryptoServiceError';
   }
 }
 
+// gRPC status codes that are retryable (transient errors)
+const RETRYABLE_GRPC_CODES = new Set([
+  14, // UNAVAILABLE - service temporarily unavailable
+  4,  // DEADLINE_EXCEEDED - timeout
+  8,  // RESOURCE_EXHAUSTED - rate limited
+]);
+
+/**
+ * Retry a function with exponential backoff
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  options: { maxRetries?: number; baseDelayMs?: number } = {}
+): Promise<T> {
+  const { maxRetries = 3, baseDelayMs = 100 } = options;
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err as Error;
+
+      // Only retry if it's a retryable error
+      if (err instanceof CryptoServiceError && !err.isRetryable) {
+        throw err;
+      }
+
+      // Don't wait after the last attempt
+      if (attempt < maxRetries) {
+        const delay = baseDelayMs * Math.pow(2, attempt); // 100, 200, 400ms
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 function formatGrpcError(err: Error & { code?: number; details?: string }, serviceUrl: string, operation: string): CryptoServiceError {
   const grpcCode = err.code;
   const details = err.details || err.message;
+  const isRetryable = grpcCode !== undefined && RETRYABLE_GRPC_CODES.has(grpcCode);
 
   let userMessage: string;
 
@@ -73,7 +114,8 @@ function formatGrpcError(err: Error & { code?: number; details?: string }, servi
     userMessage,
     operation as 'encrypt' | 'decrypt' | 'healthcheck',
     serviceUrl,
-    err
+    err,
+    isRetryable
   );
 }
 
@@ -108,6 +150,10 @@ export class RemoteEncryptionService implements IEncryptionService {
   }
 
   async encrypt(content: string): Promise<EncryptedData> {
+    return withRetry(() => this.encryptOnce(content));
+  }
+
+  private async encryptOnce(content: string): Promise<EncryptedData> {
     return new Promise((resolve, reject) => {
       this.client.Encrypt(
         { plaintext: Buffer.from(content, 'utf-8'), version: 1 },
@@ -126,6 +172,10 @@ export class RemoteEncryptionService implements IEncryptionService {
   }
 
   async decrypt(data: EncryptedData): Promise<string> {
+    return withRetry(() => this.decryptOnce(data));
+  }
+
+  private async decryptOnce(data: EncryptedData): Promise<string> {
     return new Promise((resolve, reject) => {
       this.client.Decrypt(
         {

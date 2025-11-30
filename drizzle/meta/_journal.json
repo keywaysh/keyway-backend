@@ -113,6 +113,34 @@
       "when": 1764470400000,
       "tag": "0015_add_encryption_version",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "5",
+      "when": 1764534415000,
+      "tag": "0016_add_provider_integrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "5",
+      "when": 1764534415000,
+      "tag": "0017_add_secrets_unique_constraint",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "5",
+      "when": 1764536202000,
+      "tag": "0018_add_provider_token_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "5",
+      "when": 1764538140000,
+      "tag": "0019_preserve_audit_logs",
+      "breakpoints": true
     }
   ]
 }

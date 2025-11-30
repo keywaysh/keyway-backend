@@ -45,10 +45,12 @@ function getWelcomeEmailHtml(username: string): string {
 
   <p>Hey ${username},</p>
 
-  <p>Thanks for signing up for Keyway! You now have access to GitHub-native secrets management.</p>
+  <p>Thanks for signing up for Keyway!</p>
+
+  <p>We just launched, and I'm thrilled to have you on board. Keyway gives you GitHub-native secrets management — if you have repo access, you get secret access.</p>
 
   <div style="background: #f7fafc; border-radius: 8px; padding: 20px; margin: 24px 0;">
-    <p style="margin: 0 0 12px 0; font-weight: 600;">Quick start:</p>
+    <p style="margin: 0 0 12px 0; font-weight: 600;">Getting started takes 30 seconds:</p>
     <pre style="background: #1a202c; color: #e2e8f0; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 14px; margin: 0;">keyway login
 keyway init
 keyway push</pre>
@@ -56,19 +58,23 @@ keyway push</pre>
 
   <p>That's it! Your team can now pull secrets with just <code style="background: #edf2f7; padding: 2px 6px; border-radius: 4px;">keyway pull</code>.</p>
 
-  <p style="margin-top: 32px;">
-    <a href="https://docs.keyway.sh" style="display: inline-block; background: #667eea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500;">Read the docs</a>
+  <p>You can also manage your secrets from the dashboard:</p>
+  <p style="margin-top: 16px;">
+    <a href="https://keyway.sh/dashboard" style="display: inline-block; background: #667eea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500;">Open Dashboard</a>
   </p>
 
-  <p style="margin-top: 32px; color: #718096; font-size: 14px;">
-    Questions? Just reply to this email.
+  <p style="margin-top: 32px;">Since we're just getting started, I'd love your feedback. What's working? What's not? Just reply to this email — I read every message.</p>
+
+  <p style="margin-top: 24px;">
+    Cheers,<br>
+    Nicolas
   </p>
 
   <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 32px 0;">
 
   <p style="color: #a0aec0; font-size: 12px; text-align: center;">
     Keyway - GitHub-native secrets management<br>
-    <a href="https://keyway.sh" style="color: #a0aec0;">keyway.sh</a>
+    <a href="https://keyway.sh" style="color: #a0aec0;">keyway.sh</a> · <a href="https://docs.keyway.sh" style="color: #a0aec0;">docs.keyway.sh</a>
   </p>
 </body>
 </html>
@@ -81,21 +87,28 @@ Welcome to Keyway!
 
 Hey ${username},
 
-Thanks for signing up for Keyway! You now have access to GitHub-native secrets management.
+Thanks for signing up for Keyway!
 
-Quick start:
+We just launched, and I'm thrilled to have you on board. Keyway gives you GitHub-native secrets management — if you have repo access, you get secret access.
+
+Getting started takes 30 seconds:
+
   keyway login
   keyway init
   keyway push
 
-That's it! Your team can now pull secrets with just "keyway pull".
+That's it! Your team can now pull secrets with "keyway pull".
 
-Read the docs: https://docs.keyway.sh
+You can also manage your secrets from the dashboard:
+https://keyway.sh/dashboard
 
-Questions? Just reply to this email.
+Since we're just getting started, I'd love your feedback. What's working? What's not? Just reply to this email — I read every message.
+
+Cheers,
+Nicolas
 
 ---
 Keyway - GitHub-native secrets management
-https://keyway.sh
+https://keyway.sh | https://docs.keyway.sh
 `;
 }

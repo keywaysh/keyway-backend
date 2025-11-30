@@ -12,6 +12,7 @@ import { apiV1Routes } from './api/v1';
 import { initAnalytics, shutdownAnalytics, trackEvent, AnalyticsEvents } from './utils/analytics';
 import { sql as dbConnection } from './db';
 import { sanitizeError, sanitizeHeaders } from './utils/logger';
+import { checkCryptoService } from './utils/remoteEncryption';
 
 // Create Fastify instance
 const fastify = Fastify({
@@ -199,6 +200,16 @@ const start = async () => {
       fastify.log.info('Database connection successful');
     } catch (dbError) {
       fastify.log.error({ err: dbError }, 'Database connection failed');
+      process.exit(1);
+    }
+
+    // Check crypto service connectivity
+    fastify.log.info(`Checking crypto service connectivity at ${config.crypto.serviceUrl}...`);
+    try {
+      const health = await checkCryptoService(config.crypto.serviceUrl);
+      fastify.log.info({ version: health.version }, 'Crypto service connection successful');
+    } catch (cryptoError) {
+      fastify.log.error({ err: cryptoError }, 'Crypto service connection failed');
       process.exit(1);
     }
 

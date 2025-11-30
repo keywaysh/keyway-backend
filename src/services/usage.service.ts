@@ -117,8 +117,9 @@ export async function getUserUsageResponse(userId: string, plan: UserPlan): Prom
 export async function checkVaultCreationAllowed(
   userId: string,
   plan: UserPlan,
-  isPrivate: boolean
+  isPrivate: boolean,
+  isOrganization: boolean
 ): Promise<{ allowed: boolean; reason?: string }> {
   const usage = await getUserUsage(userId);
-  return canCreateRepo(plan, usage.public, usage.private, isPrivate);
+  return canCreateRepo(plan, usage.public, usage.private, isPrivate, isOrganization);
 }

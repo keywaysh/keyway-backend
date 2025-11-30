@@ -6,7 +6,7 @@
 import { eq, and } from 'drizzle-orm';
 import { db, providerConnections, vaultSyncs, syncLogs, secrets, vaults } from '../db';
 import { getProvider } from './providers';
-import { encrypt, decrypt } from '../utils/encryption';
+import { getEncryptionService, type EncryptedData } from '../utils/encryption';
 import type { SyncDirection, SyncStatus } from '../db/schema';
 
 // Types
@@ -43,8 +43,9 @@ export interface SyncStatusInfo {
 }
 
 // Helper to encrypt provider token
-function encryptProviderToken(token: string) {
-  const encrypted = encrypt(token);
+async function encryptProviderToken(token: string) {
+  const encryptionService = await getEncryptionService();
+  const encrypted = await encryptionService.encrypt(token);
   return {
     encryptedAccessToken: encrypted.encryptedContent,
     accessTokenIv: encrypted.iv,
@@ -53,12 +54,13 @@ function encryptProviderToken(token: string) {
 }
 
 // Helper to decrypt provider token
-function decryptProviderToken(connection: {
+async function decryptProviderToken(connection: {
   encryptedAccessToken: string;
   accessTokenIv: string;
   accessTokenAuthTag: string;
-}) {
-  return decrypt({
+}): Promise<string> {
+  const encryptionService = await getEncryptionService();
+  return encryptionService.decrypt({
     encryptedContent: connection.encryptedAccessToken,
     iv: connection.accessTokenIv,
     authTag: connection.accessTokenAuthTag,
@@ -66,15 +68,16 @@ function decryptProviderToken(connection: {
 }
 
 // Helper to decrypt provider refresh token
-function decryptProviderRefreshToken(connection: {
+async function decryptProviderRefreshToken(connection: {
   encryptedRefreshToken: string | null;
   refreshTokenIv: string | null;
   refreshTokenAuthTag: string | null;
-}): string | null {
+}): Promise<string | null> {
   if (!connection.encryptedRefreshToken || !connection.refreshTokenIv || !connection.refreshTokenAuthTag) {
     return null;
   }
-  return decrypt({
+  const encryptionService = await getEncryptionService();
+  return encryptionService.decrypt({
     encryptedContent: connection.encryptedRefreshToken,
     iv: connection.refreshTokenIv,
     authTag: connection.refreshTokenAuthTag,
@@ -85,14 +88,15 @@ function decryptProviderRefreshToken(connection: {
  * Safely decrypt a secret value, returning null if decryption fails
  * This prevents one corrupted secret from crashing entire sync operations
  */
-function safeDecryptSecret(secret: {
+async function safeDecryptSecret(secret: {
   encryptedValue: string;
   iv: string;
   authTag: string;
   key: string;
-}): { key: string; value: string } | null {
+}): Promise<{ key: string; value: string } | null> {
   try {
-    const value = decrypt({
+    const encryptionService = await getEncryptionService();
+    const value = await encryptionService.decrypt({
       encryptedContent: secret.encryptedValue,
       iv: secret.iv,
       authTag: secret.authTag,
@@ -125,14 +129,14 @@ async function getValidAccessToken(connection: ConnectionWithTokens): Promise<st
   // Check if token is expired
   if (connection.tokenExpiresAt && connection.tokenExpiresAt < new Date()) {
     const provider = getProvider(connection.provider);
-    const refreshToken = decryptProviderRefreshToken(connection);
+    const refreshToken = await decryptProviderRefreshToken(connection);
 
     if (provider?.refreshToken && refreshToken) {
       try {
         const newTokens = await provider.refreshToken(refreshToken);
 
         // Update connection with new tokens
-        const encrypted = encryptProviderToken(newTokens.accessToken);
+        const encrypted = await encryptProviderToken(newTokens.accessToken);
         await db
           .update(providerConnections)
           .set({
@@ -219,11 +223,12 @@ export async function createConnection(
   expiresAt?: Date,
   scopes?: string[]
 ) {
-  const encrypted = encryptProviderToken(accessToken);
+  const encrypted = await encryptProviderToken(accessToken);
 
   let refreshTokenData = {};
   if (refreshToken) {
-    const encryptedRefresh = encrypt(refreshToken);
+    const encryptionService = await getEncryptionService();
+    const encryptedRefresh = await encryptionService.encrypt(refreshToken);
     refreshTokenData = {
       encryptedRefreshToken: encryptedRefresh.encryptedContent,
       refreshTokenIv: encryptedRefresh.iv,
@@ -419,7 +424,7 @@ export async function getSyncPreview(
   const keywaySecretsMap = new Map<string, string>();
   const decryptionErrors: string[] = [];
   for (const secret of keywaySecrets) {
-    const decrypted = safeDecryptSecret(secret);
+    const decrypted = await safeDecryptSecret(secret);
     if (decrypted) {
       keywaySecretsMap.set(decrypted.key, decrypted.value);
     } else {
@@ -658,7 +663,7 @@ async function executePush(
   const varsToSet: Record<string, string> = {};
   const decryptionErrors: string[] = [];
   for (const secret of keywaySecrets) {
-    const decrypted = safeDecryptSecret(secret);
+    const decrypted = await safeDecryptSecret(secret);
     if (decrypted) {
       varsToSet[decrypted.key] = decrypted.value;
     } else {
@@ -763,7 +768,8 @@ async function executePull(
     }
 
     // Create new secret
-    const encrypted = encrypt(envVar.value);
+    const encryptionService = await getEncryptionService();
+    const encrypted = await encryptionService.encrypt(envVar.value);
     await db.insert(secrets).values({
       vaultId,
       environment: keywayEnvironment,

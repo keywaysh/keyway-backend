@@ -11,6 +11,7 @@ import { NotFoundError, BadRequestError, ForbiddenError } from '../../../lib';
 import { authenticateGitHub } from '../../../middleware/auth';
 import { encryptAccessToken } from '../../../utils/tokenEncryption';
 import { signState, verifyState } from '../../../utils/state';
+import { sendWelcomeEmail } from '../../../utils/email';
 
 // Schemas
 const DeviceFlowStartSchema = z.object({
@@ -34,7 +35,7 @@ async function upsertUser(githubUser: { githubId: number; username: string; emai
     where: eq(users.githubId, githubUser.githubId),
   });
 
-  const encryptedToken = encryptAccessToken(accessToken);
+  const encryptedToken = await encryptAccessToken(accessToken);
 
   if (existingUser) {
     const [updatedUser] = await db
@@ -130,6 +131,11 @@ export async function authRoutes(fastify: FastifyInstance) {
             signupSource,
             signupTimestamp: user.createdAt.toISOString(),
           });
+
+          // Send welcome email (fire and forget)
+          if (user.email) {
+            sendWelcomeEmail({ to: user.email, username: user.username });
+          }
         }
 
         const isProduction = config.server.isProduction;
@@ -167,7 +173,21 @@ export async function authRoutes(fastify: FastifyInstance) {
           domain,
         });
 
-        const redirectUrl = (stateData.redirectUri as string | null) || (isProduction ? 'https://keyway.sh/dashboard' : 'http://localhost:5173/dashboard');
+        // In development with different ports, pass token via URL for frontend to set cookies
+        // In production, cookies work because same domain
+        let redirectUrl = (stateData.redirectUri as string | null) || (isProduction ? 'https://keyway.sh/dashboard' : 'http://localhost:3100/dashboard');
+
+        // If redirect URL is to a different port (dev mode), pass token via URL param
+        const backendHost = request.headers.host || '';
+        const redirectUrlObj = new URL(redirectUrl);
+        if (!isProduction && backendHost.split(':')[0] === redirectUrlObj.hostname && backendHost !== `${redirectUrlObj.hostname}:${redirectUrlObj.port}`) {
+          // Different ports on localhost - use callback with token
+          const callbackUrl = new URL('/auth/callback', redirectUrl);
+          callbackUrl.searchParams.set('token', keywayToken);
+          callbackUrl.searchParams.set('redirect', redirectUrlObj.pathname);
+          redirectUrl = callbackUrl.toString();
+        }
+
         return reply.redirect(redirectUrl);
       } else if (stateData.deviceCodeId) {
         await db
@@ -197,6 +217,11 @@ export async function authRoutes(fastify: FastifyInstance) {
             signupSource: 'cli',
             signupTimestamp: user.createdAt.toISOString(),
           });
+
+          // Send welcome email (fire and forget)
+          if (user.email) {
+            sendWelcomeEmail({ to: user.email, username: user.username });
+          }
         }
 
         return reply.type('text/html').send(renderSuccessPage(user.username));

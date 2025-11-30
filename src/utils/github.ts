@@ -22,6 +22,7 @@ interface GitHubRepo {
   private?: boolean;
   owner?: {
     login: string;
+    type?: 'User' | 'Organization';
   };
   permissions?: {
     pull?: boolean;
@@ -39,6 +40,12 @@ interface GitHubCollaborator {
     push: boolean;
     admin: boolean;
   };
+}
+
+interface GitHubTokenErrorResponse {
+  error?: string;
+  error_description?: string;
+  error_uri?: string;
 }
 
 /**
@@ -62,10 +69,16 @@ export async function exchangeCodeForToken(code: string): Promise<string> {
     throw new Error(`GitHub OAuth token exchange failed: ${response.statusText}`);
   }
 
-  const data = (await response.json()) as GitHubTokenResponse;
+  const data = (await response.json()) as GitHubTokenResponse & GitHubTokenErrorResponse;
+
+  // GitHub returns 200 even on errors, with error details in the body
+  if (data.error) {
+    const errorMessage = data.error_description || data.error;
+    throw new Error(`GitHub OAuth error: ${errorMessage} (${data.error})`);
+  }
 
   if (!data.access_token) {
-    throw new Error('No access token received from GitHub');
+    throw new Error('No access token received from GitHub (unexpected empty response)');
   }
 
   return data.access_token;
@@ -316,13 +329,13 @@ export async function getUserFromToken(accessToken: string) {
 }
 
 /**
- * Get repository info including visibility (public/private)
+ * Get repository info including visibility (public/private) and ownership type
  * Returns null if repo doesn't exist or user doesn't have access
  */
 export async function getRepoInfo(
   accessToken: string,
   repoFullName: string
-): Promise<{ isPrivate: boolean } | null> {
+): Promise<{ isPrivate: boolean; isOrganization: boolean } | null> {
   const [owner, repo] = repoFullName.split('/');
 
   try {
@@ -340,6 +353,7 @@ export async function getRepoInfo(
     const data = (await response.json()) as GitHubRepo;
     return {
       isPrivate: data.private === true,
+      isOrganization: data.owner?.type === 'Organization',
     };
   } catch {
     return null;

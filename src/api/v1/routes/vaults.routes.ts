@@ -153,7 +153,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     });
 
     if (!user) {
-      const encryptedToken = encryptAccessToken(accessToken);
+      const encryptedToken = await encryptAccessToken(accessToken);
       const [newUser] = await db
         .insert(users)
         .values({
@@ -168,7 +168,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     }
 
     // Check plan limits before creating vault
-    const limitCheck = await checkVaultCreationAllowed(user.id, user.plan, repoInfo.isPrivate);
+    const limitCheck = await checkVaultCreationAllowed(user.id, user.plan, repoInfo.isPrivate, repoInfo.isOrganization);
     if (!limitCheck.allowed) {
       throw new PlanLimitError(limitCheck.reason!);
     }

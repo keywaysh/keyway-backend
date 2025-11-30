@@ -15,11 +15,8 @@ const envSchema = z.object({
   // Database
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
-  // Encryption
-  ENCRYPTION_KEY: z
-    .string()
-    .length(64, 'ENCRYPTION_KEY must be 64 hex characters (32 bytes)')
-    .regex(/^[0-9a-f]+$/i, 'ENCRYPTION_KEY must be hexadecimal'),
+  // Encryption (remote crypto service)
+  CRYPTO_SERVICE_URL: z.string().min(1, 'CRYPTO_SERVICE_URL is required (e.g., localhost:50051)'),
 
   // JWT for Keyway tokens
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
@@ -27,7 +24,6 @@ const envSchema = z.object({
   // GitHub OAuth
   GITHUB_CLIENT_ID: z.string().min(1, 'GITHUB_CLIENT_ID is required'),
   GITHUB_CLIENT_SECRET: z.string().min(1, 'GITHUB_CLIENT_SECRET is required'),
-  GITHUB_REDIRECT_URI: z.string().url().optional(),
 
   // Analytics
   POSTHOG_API_KEY: z.string().optional(),
@@ -45,6 +41,9 @@ const envSchema = z.object({
   // Provider integrations (optional)
   VERCEL_CLIENT_ID: z.string().optional(),
   VERCEL_CLIENT_SECRET: z.string().optional(),
+
+  // Email (Resend)
+  RESEND_API_KEY: z.string().optional(),
 });
 
 // Validate environment variables
@@ -74,11 +73,8 @@ export const config = {
     url: env.DATABASE_URL,
   },
 
-  encryption: {
-    key: Buffer.from(env.ENCRYPTION_KEY, 'hex'),
-    algorithm: 'aes-256-gcm' as const,
-    ivLength: 16,
-    authTagLength: 16,
+  crypto: {
+    serviceUrl: env.CRYPTO_SERVICE_URL,
   },
 
   jwt: {
@@ -90,7 +86,6 @@ export const config = {
   github: {
     clientId: env.GITHUB_CLIENT_ID,
     clientSecret: env.GITHUB_CLIENT_SECRET,
-    redirectUri: env.GITHUB_REDIRECT_URI,
     apiBaseUrl: 'https://api.github.com',
   },
 
@@ -115,6 +110,12 @@ export const config = {
         clientSecret: env.VERCEL_CLIENT_SECRET,
       }
     : undefined,
+
+  email: {
+    resendApiKey: env.RESEND_API_KEY,
+    enabled: !!env.RESEND_API_KEY,
+    fromAddress: 'Keyway <hello@keyway.sh>',
+  },
 } as const;
 
 // Type export for usage in other files

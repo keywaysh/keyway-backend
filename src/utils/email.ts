@@ -1,0 +1,101 @@
+import { Resend } from 'resend';
+import { config } from '../config';
+
+const resend = config.email.enabled ? new Resend(config.email.resendApiKey) : null;
+
+interface WelcomeEmailParams {
+  to: string;
+  username: string;
+}
+
+export async function sendWelcomeEmail({ to, username }: WelcomeEmailParams): Promise<void> {
+  if (!resend) {
+    console.log(`[Email] Skipping welcome email (Resend not configured) - would send to ${to}`);
+    return;
+  }
+
+  try {
+    await resend.emails.send({
+      from: config.email.fromAddress,
+      to,
+      subject: 'Welcome to Keyway!',
+      html: getWelcomeEmailHtml(username),
+      text: getWelcomeEmailText(username),
+    });
+    console.log(`[Email] Welcome email sent to ${to}`);
+  } catch (error) {
+    // Don't fail the signup if email fails
+    console.error('[Email] Failed to send welcome email:', error);
+  }
+}
+
+function getWelcomeEmailHtml(username: string): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #1a202c; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+  <div style="text-align: center; margin-bottom: 32px;">
+    <img src="https://keyway.sh/logo.svg" alt="Keyway" width="48" height="48" style="margin-bottom: 16px;">
+    <h1 style="font-size: 24px; font-weight: 600; margin: 0;">Welcome to Keyway!</h1>
+  </div>
+
+  <p>Hey ${username},</p>
+
+  <p>Thanks for signing up for Keyway! You now have access to GitHub-native secrets management.</p>
+
+  <div style="background: #f7fafc; border-radius: 8px; padding: 20px; margin: 24px 0;">
+    <p style="margin: 0 0 12px 0; font-weight: 600;">Quick start:</p>
+    <pre style="background: #1a202c; color: #e2e8f0; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 14px; margin: 0;">keyway login
+keyway init
+keyway push</pre>
+  </div>
+
+  <p>That's it! Your team can now pull secrets with just <code style="background: #edf2f7; padding: 2px 6px; border-radius: 4px;">keyway pull</code>.</p>
+
+  <p style="margin-top: 32px;">
+    <a href="https://docs.keyway.sh" style="display: inline-block; background: #667eea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500;">Read the docs</a>
+  </p>
+
+  <p style="margin-top: 32px; color: #718096; font-size: 14px;">
+    Questions? Just reply to this email.
+  </p>
+
+  <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 32px 0;">
+
+  <p style="color: #a0aec0; font-size: 12px; text-align: center;">
+    Keyway - GitHub-native secrets management<br>
+    <a href="https://keyway.sh" style="color: #a0aec0;">keyway.sh</a>
+  </p>
+</body>
+</html>
+`;
+}
+
+function getWelcomeEmailText(username: string): string {
+  return `
+Welcome to Keyway!
+
+Hey ${username},
+
+Thanks for signing up for Keyway! You now have access to GitHub-native secrets management.
+
+Quick start:
+  keyway login
+  keyway init
+  keyway push
+
+That's it! Your team can now pull secrets with just "keyway pull".
+
+Read the docs: https://docs.keyway.sh
+
+Questions? Just reply to this email.
+
+---
+Keyway - GitHub-native secrets management
+https://keyway.sh
+`;
+}

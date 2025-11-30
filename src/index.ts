@@ -12,6 +12,7 @@ import { apiV1Routes } from './api/v1';
 import { initAnalytics, shutdownAnalytics, trackEvent, AnalyticsEvents } from './utils/analytics';
 import { sql as dbConnection } from './db';
 import { sanitizeError, sanitizeHeaders } from './utils/logger';
+import { checkCryptoService } from './utils/remoteEncryption';
 
 // Create Fastify instance
 const fastify = Fastify({
@@ -88,26 +89,42 @@ fastify.addHook('onSend', async (request, reply) => {
 
 // Health check endpoint
 fastify.get('/health', async (request, reply) => {
+  let dbStatus = 'connected';
+  let cryptoStatus = 'connected';
+  let cryptoVersion: string | undefined;
+
+  // Check database connectivity
   try {
-    // Check database connectivity
     await dbConnection`SELECT 1`;
-
-    return {
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      environment: config.server.nodeEnv,
-      database: 'connected',
-    };
-  } catch (error) {
-    fastify.log.error({ err: error }, 'Health check failed');
-
-    return reply.status(503).send({
-      status: 'unhealthy',
-      timestamp: new Date().toISOString(),
-      environment: config.server.nodeEnv,
-      database: 'disconnected',
-    });
+  } catch {
+    dbStatus = 'disconnected';
   }
+
+  // Check crypto service connectivity
+  try {
+    const health = await checkCryptoService(config.crypto.serviceUrl);
+    cryptoVersion = health.version;
+  } catch {
+    cryptoStatus = 'disconnected';
+  }
+
+  const isHealthy = dbStatus === 'connected'; // DB is required, crypto is optional for health
+  const status = isHealthy ? 'healthy' : 'unhealthy';
+
+  const response = {
+    status,
+    timestamp: new Date().toISOString(),
+    environment: config.server.nodeEnv,
+    database: dbStatus,
+    crypto: cryptoStatus,
+    ...(cryptoVersion && { cryptoVersion }),
+  };
+
+  if (!isHealthy) {
+    return reply.status(503).send(response);
+  }
+
+  return response;
 });
 
 // Register API v1 routes
@@ -203,6 +220,25 @@ fastify.setErrorHandler((error: Error & { statusCode?: number; validation?: unkn
 // Start server
 const start = async () => {
   try {
+    // Check database connectivity before starting
+    fastify.log.info('Checking database connectivity...');
+    try {
+      await dbConnection`SELECT 1`;
+      fastify.log.info('Database connection successful');
+    } catch (dbError) {
+      fastify.log.error({ err: dbError }, 'Database connection failed');
+      process.exit(1);
+    }
+
+    // Check crypto service connectivity (warning only, don't crash)
+    fastify.log.info(`Checking crypto service connectivity at ${config.crypto.serviceUrl}...`);
+    try {
+      const health = await checkCryptoService(config.crypto.serviceUrl);
+      fastify.log.info({ version: health.version }, 'Crypto service connection successful');
+    } catch (cryptoError) {
+      fastify.log.warn({ err: cryptoError }, 'Crypto service not available at startup - encryption/decryption will fail until service is accessible');
+    }
+
     // Initialize analytics
     initAnalytics();
 

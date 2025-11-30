@@ -15,6 +15,50 @@ import { config } from '../../config';
 
 const VERCEL_API_BASE = 'https://api.vercel.com';
 const VERCEL_OAUTH_BASE = 'https://vercel.com';
+const DEFAULT_TIMEOUT_MS = 30000; // 30 seconds
+
+// Logger for provider operations - sanitizes context to prevent token leakage
+const logger = {
+  error: (context: Record<string, unknown>, message: string) => {
+    const sanitized = sanitizeLogContext(context);
+    console.error(`[VercelProvider] ${message}`, JSON.stringify(sanitized, null, 2));
+  },
+  warn: (context: Record<string, unknown>, message: string) => {
+    const sanitized = sanitizeLogContext(context);
+    console.warn(`[VercelProvider] ${message}`, JSON.stringify(sanitized, null, 2));
+  },
+};
+
+// Sanitize context to prevent token/secret leakage in logs
+function sanitizeLogContext(context: Record<string, unknown>): Record<string, unknown> {
+  const sensitiveKeys = ['token', 'accessToken', 'refreshToken', 'secret', 'password', 'authorization'];
+  const result: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(context)) {
+    const lowerKey = key.toLowerCase();
+    if (sensitiveKeys.some(sk => lowerKey.includes(sk))) {
+      result[key] = '[REDACTED]';
+    } else if (typeof value === 'string' && value.length > 100) {
+      // Truncate long strings that might contain tokens
+      result[key] = value.substring(0, 50) + '...[truncated]';
+    } else {
+      result[key] = value;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Safely stringify an object, catching any errors to prevent secret leakage
+ */
+function safeStringify(obj: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(obj);
+  } catch {
+    throw new Error('Failed to serialize request body');
+  }
+}
 
 interface VercelApiError {
   error?: {
@@ -37,28 +81,76 @@ class VercelProviderError extends Error {
 async function vercelFetch<T>(
   url: string,
   accessToken: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  timeoutMs = DEFAULT_TIMEOUT_MS
 ): Promise<T> {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  const data = await response.json() as T & VercelApiError;
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
 
-  if (!response.ok) {
-    throw new VercelProviderError(
-      data.error?.message || `Vercel API error: ${response.status}`,
-      data.error?.code,
-      response.status
-    );
+    // Handle rate limiting
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('Retry-After');
+      throw new VercelProviderError(
+        `Rate limited by Vercel API. Retry after ${retryAfter || 'a few'} seconds.`,
+        'rate_limited',
+        429
+      );
+    }
+
+    // Parse JSON with error handling
+    let data: T & VercelApiError;
+    try {
+      data = await response.json() as T & VercelApiError;
+    } catch (parseError) {
+      // Handle non-JSON responses (e.g., gateway errors, HTML error pages)
+      throw new VercelProviderError(
+        `Vercel API returned invalid response: ${response.status} ${response.statusText}`,
+        'invalid_response',
+        response.status
+      );
+    }
+
+    if (!response.ok) {
+      throw new VercelProviderError(
+        data.error?.message || `Vercel API error: ${response.status}`,
+        data.error?.code,
+        response.status
+      );
+    }
+
+    return data;
+  } catch (error) {
+    // Handle abort/timeout
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new VercelProviderError(
+        `Request to Vercel API timed out after ${timeoutMs / 1000}s`,
+        'timeout',
+        0
+      );
+    }
+    // Handle network errors
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      throw new VercelProviderError(
+        'Network error connecting to Vercel API. Check your internet connection.',
+        'network_error',
+        0
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return data;
 }
 
 function buildTeamQuery(teamId?: string): string {
@@ -232,7 +324,7 @@ export const vercelProvider: Provider = {
     environment: string,
     vars: Record<string, string>,
     teamId?: string
-  ): Promise<{ created: number; updated: number }> {
+  ): Promise<{ created: number; updated: number; failed: number; failedKeys: string[] }> {
     const query = buildTeamQuery(teamId);
     const targetEnv = environment.toLowerCase();
 
@@ -253,64 +345,85 @@ export const vercelProvider: Provider = {
 
     let created = 0;
     let updated = 0;
+    let failed = 0;
+    const failedKeys: string[] = [];
 
     for (const [key, value] of Object.entries(vars)) {
-      const existing = existingMap.get(key);
+      try {
+        const existing = existingMap.get(key);
 
-      if (existing) {
-        // Update existing env var
-        // Check if it already targets this environment
-        const alreadyTargetsEnv = existing.targets.some(t => t.toLowerCase() === targetEnv);
+        if (existing) {
+          // Update existing env var
+          // Check if it already targets this environment
+          const alreadyTargetsEnv = existing.targets.some(t => t.toLowerCase() === targetEnv);
 
-        if (alreadyTargetsEnv) {
-          // Update the value
-          await vercelFetch(
-            `${VERCEL_API_BASE}/v10/projects/${encodeURIComponent(projectId)}/env/${existing.id}${query}`,
-            accessToken,
-            {
-              method: 'PATCH',
-              body: JSON.stringify({
-                value,
-                type: 'encrypted',
-              }),
-            }
-          );
-        } else {
-          // Add this environment to targets
-          await vercelFetch(
-            `${VERCEL_API_BASE}/v10/projects/${encodeURIComponent(projectId)}/env/${existing.id}${query}`,
-            accessToken,
-            {
-              method: 'PATCH',
-              body: JSON.stringify({
-                value,
-                target: [...existing.targets, targetEnv],
-                type: 'encrypted',
-              }),
-            }
-          );
-        }
-        updated++;
-      } else {
-        // Create new env var
-        await vercelFetch(
-          `${VERCEL_API_BASE}/v10/projects/${encodeURIComponent(projectId)}/env${query}`,
-          accessToken,
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              key,
-              value,
-              target: [targetEnv],
-              type: 'encrypted',
-            }),
+          if (alreadyTargetsEnv) {
+            // Update the value
+            await vercelFetch(
+              `${VERCEL_API_BASE}/v10/projects/${encodeURIComponent(projectId)}/env/${existing.id}${query}`,
+              accessToken,
+              {
+                method: 'PATCH',
+                body: safeStringify({
+                  value,
+                  type: 'encrypted',
+                }),
+              }
+            );
+          } else {
+            // Add this environment to targets
+            await vercelFetch(
+              `${VERCEL_API_BASE}/v10/projects/${encodeURIComponent(projectId)}/env/${existing.id}${query}`,
+              accessToken,
+              {
+                method: 'PATCH',
+                body: safeStringify({
+                  value,
+                  target: [...existing.targets, targetEnv],
+                  type: 'encrypted',
+                }),
+              }
+            );
           }
+          updated++;
+        } else {
+          // Create new env var
+          await vercelFetch(
+            `${VERCEL_API_BASE}/v10/projects/${encodeURIComponent(projectId)}/env${query}`,
+            accessToken,
+            {
+              method: 'POST',
+              body: safeStringify({
+                key,
+                value,
+                target: [targetEnv],
+                type: 'encrypted',
+              }),
+            }
+          );
+          created++;
+        }
+      } catch (error) {
+        // Track partial failure but continue with other keys
+        failed++;
+        failedKeys.push(key);
+        logger.error(
+          { key, projectId, environment, error: error instanceof Error ? error.message : 'Unknown error' },
+          'Failed to set env var'
         );
-        created++;
       }
     }
 
-    return { created, updated };
+    // If all operations failed, throw an error
+    if (failed > 0 && created === 0 && updated === 0) {
+      throw new VercelProviderError(
+        `Failed to set all ${failed} environment variables`,
+        'all_operations_failed',
+        0
+      );
+    }
+
+    return { created, updated, failed, failedKeys };
   },
 
   async deleteEnvVar(
@@ -345,7 +458,7 @@ export const vercelProvider: Provider = {
         accessToken,
         {
           method: 'PATCH',
-          body: JSON.stringify({
+          body: safeStringify({
             target: remainingTargets,
           }),
         }
@@ -366,18 +479,36 @@ export const vercelProvider: Provider = {
     environment: string,
     keys: string[],
     teamId?: string
-  ): Promise<{ deleted: number }> {
+  ): Promise<{ deleted: number; failed: number; failedKeys: string[] }> {
     let deleted = 0;
+    let failed = 0;
+    const failedKeys: string[] = [];
+
     for (const key of keys) {
       try {
         await this.deleteEnvVar(accessToken, projectId, environment, key, teamId);
         deleted++;
       } catch (error) {
-        // Continue on error, count successful deletions
-        console.error(`Failed to delete env var ${key}:`, error);
+        // Track failure but continue with other keys
+        failed++;
+        failedKeys.push(key);
+        logger.error(
+          { key, projectId, environment, error: error instanceof Error ? error.message : 'Unknown error' },
+          'Failed to delete env var'
+        );
       }
     }
-    return { deleted };
+
+    // If all operations failed, throw an error
+    if (failed > 0 && deleted === 0) {
+      throw new VercelProviderError(
+        `Failed to delete all ${failed} environment variables`,
+        'all_operations_failed',
+        0
+      );
+    }
+
+    return { deleted, failed, failedKeys };
   },
 };
 

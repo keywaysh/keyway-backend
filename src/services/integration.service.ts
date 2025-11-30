@@ -65,6 +65,97 @@ function decryptProviderToken(connection: {
   });
 }
 
+// Helper to decrypt provider refresh token
+function decryptProviderRefreshToken(connection: {
+  encryptedRefreshToken: string | null;
+  refreshTokenIv: string | null;
+  refreshTokenAuthTag: string | null;
+}): string | null {
+  if (!connection.encryptedRefreshToken || !connection.refreshTokenIv || !connection.refreshTokenAuthTag) {
+    return null;
+  }
+  return decrypt({
+    encryptedContent: connection.encryptedRefreshToken,
+    iv: connection.refreshTokenIv,
+    authTag: connection.refreshTokenAuthTag,
+  });
+}
+
+/**
+ * Safely decrypt a secret value, returning null if decryption fails
+ * This prevents one corrupted secret from crashing entire sync operations
+ */
+function safeDecryptSecret(secret: {
+  encryptedValue: string;
+  iv: string;
+  authTag: string;
+  key: string;
+}): { key: string; value: string } | null {
+  try {
+    const value = decrypt({
+      encryptedContent: secret.encryptedValue,
+      iv: secret.iv,
+      authTag: secret.authTag,
+    });
+    return { key: secret.key, value };
+  } catch (error) {
+    console.error(`[IntegrationService] Failed to decrypt secret '${secret.key}': ${error instanceof Error ? error.message : 'Unknown error'}`);
+    return null;
+  }
+}
+
+// Type for connection with all token fields
+type ConnectionWithTokens = {
+  id: string;
+  provider: string;
+  providerTeamId: string | null;
+  encryptedAccessToken: string;
+  accessTokenIv: string;
+  accessTokenAuthTag: string;
+  encryptedRefreshToken: string | null;
+  refreshTokenIv: string | null;
+  refreshTokenAuthTag: string | null;
+  tokenExpiresAt: Date | null;
+};
+
+/**
+ * Get valid access token, refreshing if expired
+ */
+async function getValidAccessToken(connection: ConnectionWithTokens): Promise<string> {
+  // Check if token is expired
+  if (connection.tokenExpiresAt && connection.tokenExpiresAt < new Date()) {
+    const provider = getProvider(connection.provider);
+    const refreshToken = decryptProviderRefreshToken(connection);
+
+    if (provider?.refreshToken && refreshToken) {
+      try {
+        const newTokens = await provider.refreshToken(refreshToken);
+
+        // Update connection with new tokens
+        const encrypted = encryptProviderToken(newTokens.accessToken);
+        await db
+          .update(providerConnections)
+          .set({
+            ...encrypted,
+            tokenExpiresAt: newTokens.expiresIn
+              ? new Date(Date.now() + newTokens.expiresIn * 1000)
+              : null,
+            updatedAt: new Date(),
+          })
+          .where(eq(providerConnections.id, connection.id));
+
+        return newTokens.accessToken;
+      } catch {
+        throw new Error('Token expired and refresh failed. Please reconnect to provider.');
+      }
+    }
+
+    throw new Error('Token expired. Please reconnect to provider.');
+  }
+
+  return decryptProviderToken(connection);
+}
+
 /**
  * Get a user's connection to a provider
  */
@@ -198,10 +289,15 @@ export async function getConnectionToken(connectionId: string): Promise<string |
 
 /**
  * List provider projects for a connection
+ * Requires userId for ownership validation
  */
-export async function listProviderProjects(connectionId: string) {
+export async function listProviderProjects(connectionId: string, userId: string) {
+  // Validate connection belongs to the user (IDOR protection)
   const connection = await db.query.providerConnections.findFirst({
-    where: eq(providerConnections.id, connectionId),
+    where: and(
+      eq(providerConnections.id, connectionId),
+      eq(providerConnections.userId, userId)
+    ),
   });
 
   if (!connection) {
@@ -213,54 +309,62 @@ export async function listProviderProjects(connectionId: string) {
     throw new Error(`Provider ${connection.provider} not found`);
   }
 
-  const accessToken = decryptProviderToken(connection);
+  const accessToken = await getValidAccessToken(connection);
   return provider.listProjects(accessToken, connection.providerTeamId || undefined);
 }
 
 /**
  * Get sync status (for first-time detection)
+ * Requires userId for ownership validation
  */
 export async function getSyncStatus(
   vaultId: string,
   connectionId: string,
   projectId: string,
-  environment: string
+  environment: string,
+  userId: string
 ): Promise<SyncStatusInfo> {
-  // Check if there's been a previous sync
-  const existingSync = await db.query.vaultSyncs.findFirst({
-    where: and(
-      eq(vaultSyncs.vaultId, vaultId),
-      eq(vaultSyncs.connectionId, connectionId),
-      eq(vaultSyncs.providerProjectId, projectId)
-    ),
-  });
+  // Batch queries for better performance, including ownership check
+  const [existingSync, vaultSecrets, connection] = await Promise.all([
+    // Check if there's been a previous sync
+    db.query.vaultSyncs.findFirst({
+      where: and(
+        eq(vaultSyncs.vaultId, vaultId),
+        eq(vaultSyncs.connectionId, connectionId),
+        eq(vaultSyncs.providerProjectId, projectId)
+      ),
+    }),
+    // Check if vault has secrets
+    db.query.secrets.findMany({
+      where: and(
+        eq(secrets.vaultId, vaultId),
+        eq(secrets.environment, environment)
+      ),
+    }),
+    // Get connection for provider access (with ownership validation)
+    db.query.providerConnections.findFirst({
+      where: and(
+        eq(providerConnections.id, connectionId),
+        eq(providerConnections.userId, userId)
+      ),
+    }),
+  ]);
 
-  // Check if vault has secrets
-  const vaultSecrets = await db.query.secrets.findMany({
-    where: and(
-      eq(secrets.vaultId, vaultId),
-      eq(secrets.environment, environment)
-    ),
-  });
-
-  // Get provider secrets count
-  const connection = await db.query.providerConnections.findFirst({
-    where: eq(providerConnections.id, connectionId),
-  });
+  if (!connection) {
+    throw new Error('Connection not found');
+  }
 
   let providerSecretCount = 0;
-  if (connection) {
-    const provider = getProvider(connection.provider);
-    if (provider) {
-      const accessToken = decryptProviderToken(connection);
-      const providerEnvVars = await provider.listEnvVars(
-        accessToken,
-        projectId,
-        environment,
-        connection.providerTeamId || undefined
-      );
-      providerSecretCount = providerEnvVars.length;
-    }
+  const provider = getProvider(connection.provider);
+  if (provider) {
+    const accessToken = await getValidAccessToken(connection);
+    const providerEnvVars = await provider.listEnvVars(
+      accessToken,
+      projectId,
+      environment,
+      connection.providerTeamId || undefined
+    );
+    providerSecretCount = providerEnvVars.length;
   }
 
   return {
@@ -273,6 +377,7 @@ export async function getSyncStatus(
 
 /**
  * Get sync preview (what would change)
+ * Requires userId for ownership validation
  */
 export async function getSyncPreview(
   vaultId: string,
@@ -281,10 +386,15 @@ export async function getSyncPreview(
   keywayEnvironment: string,
   providerEnvironment: string,
   direction: SyncDirection,
-  allowDelete: boolean
+  allowDelete: boolean,
+  userId: string
 ): Promise<SyncPreview> {
+  // Validate connection belongs to the user (IDOR protection)
   const connection = await db.query.providerConnections.findFirst({
-    where: eq(providerConnections.id, connectionId),
+    where: and(
+      eq(providerConnections.id, connectionId),
+      eq(providerConnections.userId, userId)
+    ),
   });
 
   if (!connection) {
@@ -296,7 +406,7 @@ export async function getSyncPreview(
     throw new Error(`Provider ${connection.provider} not found`);
   }
 
-  const accessToken = decryptProviderToken(connection);
+  const accessToken = await getValidAccessToken(connection);
 
   // Get Keyway secrets
   const keywaySecrets = await db.query.secrets.findMany({
@@ -307,13 +417,19 @@ export async function getSyncPreview(
   });
 
   const keywaySecretsMap = new Map<string, string>();
+  const decryptionErrors: string[] = [];
   for (const secret of keywaySecrets) {
-    const value = decrypt({
-      encryptedContent: secret.encryptedValue,
-      iv: secret.iv,
-      authTag: secret.authTag,
-    });
-    keywaySecretsMap.set(secret.key, value);
+    const decrypted = safeDecryptSecret(secret);
+    if (decrypted) {
+      keywaySecretsMap.set(decrypted.key, decrypted.value);
+    } else {
+      decryptionErrors.push(secret.key);
+    }
+  }
+
+  // Log if there were decryption errors but continue with available secrets
+  if (decryptionErrors.length > 0) {
+    console.warn(`[IntegrationService] Skipped ${decryptionErrors.length} secrets due to decryption errors: ${decryptionErrors.join(', ')}`);
   }
 
   // Get provider secrets
@@ -376,6 +492,7 @@ export async function getSyncPreview(
 
 /**
  * Execute a sync operation
+ * Requires triggeredBy (userId) for ownership validation
  */
 export async function executeSync(
   vaultId: string,
@@ -387,8 +504,12 @@ export async function executeSync(
   allowDelete: boolean,
   triggeredBy: string
 ): Promise<SyncResult> {
+  // Validate connection belongs to the user (IDOR protection)
   const connection = await db.query.providerConnections.findFirst({
-    where: eq(providerConnections.id, connectionId),
+    where: and(
+      eq(providerConnections.id, connectionId),
+      eq(providerConnections.userId, triggeredBy)
+    ),
   });
 
   if (!connection) {
@@ -400,7 +521,7 @@ export async function executeSync(
     throw new Error(`Provider ${connection.provider} not found`);
   }
 
-  const accessToken = decryptProviderToken(connection);
+  const accessToken = await getValidAccessToken(connection);
 
   // Get or create vault sync config
   let syncConfig = await db.query.vaultSyncs.findFirst({
@@ -460,11 +581,27 @@ export async function executeSync(
       );
     }
 
-    // Update last synced
-    await db
-      .update(vaultSyncs)
-      .set({ lastSyncedAt: new Date() })
-      .where(eq(vaultSyncs.id, syncConfig.id));
+    // Update last synced and log atomically
+    await db.transaction(async (tx) => {
+      await tx
+        .update(vaultSyncs)
+        .set({ lastSyncedAt: new Date() })
+        .where(eq(vaultSyncs.id, syncConfig.id));
+
+      await tx.insert(syncLogs).values({
+        syncId: syncConfig.id,
+        vaultId,
+        provider: connection.provider,
+        direction,
+        status: result.status,
+        secretsCreated: result.created,
+        secretsUpdated: result.updated,
+        secretsDeleted: result.deleted,
+        secretsSkipped: result.skipped,
+        error: result.error,
+        triggeredBy,
+      });
+    });
 
   } catch (error) {
     result = {
@@ -475,22 +612,22 @@ export async function executeSync(
       skipped: 0,
       error: error instanceof Error ? error.message : 'Unknown error',
     };
-  }
 
-  // Log the sync
-  await db.insert(syncLogs).values({
-    syncId: syncConfig.id,
-    vaultId,
-    provider: connection.provider,
-    direction,
-    status: result.status,
-    secretsCreated: result.created,
-    secretsUpdated: result.updated,
-    secretsDeleted: result.deleted,
-    secretsSkipped: result.skipped,
-    error: result.error,
-    triggeredBy,
-  });
+    // Log the failed sync (outside transaction since sync failed)
+    await db.insert(syncLogs).values({
+      syncId: syncConfig.id,
+      vaultId,
+      provider: connection.provider,
+      direction,
+      status: result.status,
+      secretsCreated: result.created,
+      secretsUpdated: result.updated,
+      secretsDeleted: result.deleted,
+      secretsSkipped: result.skipped,
+      error: result.error,
+      triggeredBy,
+    });
+  }
 
   return result;
 }
@@ -519,13 +656,19 @@ async function executePush(
   });
 
   const varsToSet: Record<string, string> = {};
+  const decryptionErrors: string[] = [];
   for (const secret of keywaySecrets) {
-    const value = decrypt({
-      encryptedContent: secret.encryptedValue,
-      iv: secret.iv,
-      authTag: secret.authTag,
-    });
-    varsToSet[secret.key] = value;
+    const decrypted = safeDecryptSecret(secret);
+    if (decrypted) {
+      varsToSet[decrypted.key] = decrypted.value;
+    } else {
+      decryptionErrors.push(secret.key);
+    }
+  }
+
+  // Log if there were decryption errors but continue with available secrets
+  if (decryptionErrors.length > 0) {
+    console.warn(`[IntegrationService] Skipped ${decryptionErrors.length} secrets in push due to decryption errors: ${decryptionErrors.join(', ')}`);
   }
 
   // Set env vars

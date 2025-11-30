@@ -24,6 +24,16 @@ import { db, vaults, users } from '../../../db';
 import { eq } from 'drizzle-orm';
 import { NotFoundError, ForbiddenError } from '../../../lib';
 import { hasRepoAccess } from '../../../utils/github';
+import { providerConnections } from '../../../db/schema';
+import { and } from 'drizzle-orm';
+
+// Allowed redirect origins for OAuth callbacks
+const ALLOWED_REDIRECT_ORIGINS = [
+  'https://keyway.sh',
+  'https://app.keyway.sh',
+  'http://localhost:3000',
+  'http://localhost:5173',
+];
 
 // Schemas
 const SyncBodySchema = z.object({
@@ -150,12 +160,27 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
       throw new NotFoundError(`Provider ${providerName} not found`);
     }
 
+    // Validate redirect_uri upfront if provided (prevents signing invalid URIs)
+    let validatedRedirectUri: string | null = null;
+    if (query.redirect_uri) {
+      try {
+        const url = new URL(query.redirect_uri);
+        if (!ALLOWED_REDIRECT_ORIGINS.includes(url.origin)) {
+          throw new ForbiddenError(`Invalid redirect origin: ${url.origin}`);
+        }
+        validatedRedirectUri = query.redirect_uri;
+      } catch (e) {
+        if (e instanceof ForbiddenError) throw e;
+        throw new ForbiddenError('Invalid redirect URI format');
+      }
+    }
+
     // Sign state to prevent CSRF
     const state = signState({
       type: 'provider_oauth',
       provider: providerName,
       userId: request.githubUser!.githubId,
-      redirectUri: query.redirect_uri || null,
+      redirectUri: validatedRedirectUri,
     });
 
     const callbackUri = buildCallbackUrl(request, providerName);
@@ -229,10 +254,21 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
         tokenResponse.scope?.split(' ')
       );
 
-      // Redirect to success page or redirect_uri
+      // Redirect to success page or redirect_uri (with validation)
       const redirectUri = stateData.redirectUri as string | null;
       if (redirectUri) {
-        return reply.redirect(redirectUri);
+        try {
+          const url = new URL(redirectUri);
+          if (!ALLOWED_REDIRECT_ORIGINS.includes(url.origin)) {
+            fastify.log.warn({ redirectUri, origin: url.origin }, 'Invalid redirect origin attempted');
+            // Fall through to success page instead of open redirect
+          } else {
+            return reply.redirect(redirectUri);
+          }
+        } catch {
+          fastify.log.warn({ redirectUri }, 'Invalid redirect URI format');
+          // Fall through to success page
+        }
       }
 
       return reply.type('text/html').send(renderSuccessPage(providerName, providerUser.username));
@@ -256,7 +292,17 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
   }, async (request) => {
     const { id } = request.params as { id: string };
 
-    const projects = await listProviderProjects(id);
+    // Get the authenticated user
+    const user = await db.query.users.findFirst({
+      where: eq(users.githubId, request.githubUser!.githubId),
+    });
+
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    // listProviderProjects now requires userId for ownership validation
+    const projects = await listProviderProjects(id, user.id);
     return { projects };
   });
 
@@ -272,11 +318,21 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
 
     const vault = await verifyVaultAccess(request.accessToken!, owner, repo);
 
+    // Get the authenticated user for ownership validation
+    const user = await db.query.users.findFirst({
+      where: eq(users.githubId, request.githubUser!.githubId),
+    });
+
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
     const status = await getSyncStatus(
       vault.id,
       query.connectionId,
       query.projectId,
-      query.environment
+      query.environment,
+      user.id
     );
 
     return status;
@@ -294,6 +350,15 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
 
     const vault = await verifyVaultAccess(request.accessToken!, owner, repo);
 
+    // Get the authenticated user for ownership validation
+    const user = await db.query.users.findFirst({
+      where: eq(users.githubId, request.githubUser!.githubId),
+    });
+
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
     const preview = await getSyncPreview(
       vault.id,
       query.connectionId,
@@ -301,7 +366,8 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
       query.keywayEnvironment,
       query.providerEnvironment,
       query.direction,
-      query.allowDelete || false
+      query.allowDelete || false,
+      user.id
     );
 
     return preview;
@@ -325,6 +391,18 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
 
     if (!user) {
       throw new NotFoundError('User not found');
+    }
+
+    // Verify the connection belongs to the authenticated user
+    const connection = await db.query.providerConnections.findFirst({
+      where: and(
+        eq(providerConnections.id, body.connectionId),
+        eq(providerConnections.userId, user.id)
+      ),
+    });
+
+    if (!connection) {
+      throw new ForbiddenError('Connection not found or does not belong to you');
     }
 
     const result = await executeSync(

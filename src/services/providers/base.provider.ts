@@ -92,7 +92,7 @@ export interface Provider {
     environment: string,
     vars: Record<string, string>,
     teamId?: string
-  ): Promise<{ created: number; updated: number }>;
+  ): Promise<{ created: number; updated: number; failed?: number; failedKeys?: string[] }>;
 
   /** Delete an environment variable */
   deleteEnvVar(
@@ -110,7 +110,7 @@ export interface Provider {
     environment: string,
     keys: string[],
     teamId?: string
-  ): Promise<{ deleted: number }>;
+  ): Promise<{ deleted: number; failed?: number; failedKeys?: string[] }>;
 }
 
 /**

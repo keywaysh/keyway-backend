@@ -44,6 +44,9 @@ const envSchema = z.object({
 
   // Email (Resend)
   RESEND_API_KEY: z.string().optional(),
+
+  // Admin
+  ADMIN_SECRET: z.string().min(32).optional(),
 });
 
 // Validate environment variables
@@ -115,6 +118,11 @@ export const config = {
     resendApiKey: env.RESEND_API_KEY,
     enabled: !!env.RESEND_API_KEY,
     fromAddress: 'Keyway <hello@keyway.sh>',
+  },
+
+  admin: {
+    secret: env.ADMIN_SECRET,
+    enabled: !!env.ADMIN_SECRET,
   },
 } as const;
 

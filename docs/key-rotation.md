@@ -14,26 +14,46 @@ Key rotation is a zero-downtime process:
 ## Prerequisites
 
 - Access to the `keyway-crypto` service configuration
-- Access to run the rotation script on the backend
+- `ADMIN_SECRET` environment variable configured on the backend
 - Database backup (recommended)
 
-## Running on Railway
+## Running the Rotation
 
-Railway doesn't provide shell access, but you can run one-off commands via the Railway CLI:
+Use the admin API endpoint to run key rotation. First, configure `ADMIN_SECRET`:
 
 ```bash
-# Install Railway CLI
-npm i -g @railway/cli
+# Generate an admin secret (32+ characters)
+openssl rand -base64 32
 
-# Login and link to your project
-railway login
-railway link
+# Set ADMIN_SECRET in your environment (Railway, etc.)
+```
 
+Then call the endpoint:
+
+```bash
 # Dry run first
-railway run -s keyway-backend pnpm run rotate-key -- --dry-run
+curl -X POST "https://api.keyway.sh/v1/admin/rotate-key?dryRun=true" \
+  -H "X-Admin-Secret: $ADMIN_SECRET"
 
 # Execute rotation
-railway run -s keyway-backend pnpm run rotate-key
+curl -X POST "https://api.keyway.sh/v1/admin/rotate-key" \
+  -H "X-Admin-Secret: $ADMIN_SECRET"
+
+# With custom batch size
+curl -X POST "https://api.keyway.sh/v1/admin/rotate-key?batchSize=50" \
+  -H "X-Admin-Secret: $ADMIN_SECRET"
+```
+
+Response:
+```json
+{
+  "success": true,
+  "dryRun": false,
+  "targetVersion": 2,
+  "secrets": { "total": 150, "rotated": 150, "failed": 0 },
+  "providerTokens": { "total": 10, "rotated": 10, "failed": 0 },
+  "userTokens": { "total": 25, "rotated": 25, "failed": 0 }
+}
 ```
 
 ## Step-by-Step Guide
@@ -73,55 +93,29 @@ Verify with logs:
 Loaded 2 encryption key(s), current version: 2, available versions: [1 2]
 ```
 
-### 4. Run the Rotation Script
+### 4. Run the Rotation
 
 First, do a dry run to see what would be migrated:
 
 ```bash
-cd keyway-backend
-pnpm run rotate-key -- --dry-run
+curl -X POST "https://api.keyway.sh/v1/admin/rotate-key?dryRun=true" \
+  -H "X-Admin-Secret: $ADMIN_SECRET"
 ```
-
-Output shows counts of secrets, provider tokens, and user tokens to rotate.
 
 When ready, run the actual migration:
 
 ```bash
-pnpm run rotate-key
-```
-
-For large databases, adjust batch size:
-
-```bash
-pnpm run rotate-key -- --batch-size=50
+curl -X POST "https://api.keyway.sh/v1/admin/rotate-key" \
+  -H "X-Admin-Secret: $ADMIN_SECRET"
 ```
 
 ### 5. Verify Migration
 
-The script outputs a summary:
-```
-📊 Rotation Summary
-==================================================
-
-Secrets:
-   Total: 150
-   Rotated: 150
-   Failed: 0
-
-Provider Tokens:
-   Total: 10
-   Rotated: 10
-   Failed: 0
-
-User Tokens:
-   Total: 25
-   Rotated: 25
-   Failed: 0
-
-✅ Key rotation completed successfully!
-```
+Check the response for `"success": true` and `"failed": 0` for all categories.
 
 ### 6. Remove the Old Key
+
+> ⚠️ **CRITICAL**: Only remove the old key after ALL data has been successfully migrated with **0 failures**. If any secrets, provider tokens, or user tokens remain encrypted with the old key, they will become **permanently unrecoverable** once the key is removed. Always verify the rotation summary shows `Failed: 0` for all categories before proceeding.
 
 Once all data is migrated, update the configuration to remove the old key:
 
@@ -143,7 +137,7 @@ If a key is compromised:
 
 1. **Immediately** generate a new key and update `ENCRYPTION_KEYS`
 2. Redeploy `keyway-crypto`
-3. Run the rotation script with higher priority
+3. Run the rotation via the admin endpoint
 4. Remove the compromised key
 5. Consider invalidating affected user sessions
 
@@ -153,9 +147,9 @@ If a key is compromised:
 
 The crypto service doesn't have the key for that version. Ensure all required versions are in `ENCRYPTION_KEYS`.
 
-### Rotation script fails mid-way
+### Rotation fails mid-way
 
-The script is idempotent - you can safely re-run it. It only processes records that don't match the current version.
+The rotation is idempotent - you can safely re-run it. It only processes records that don't match the current version.
 
 ### Large number of failures
 

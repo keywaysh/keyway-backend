@@ -72,6 +72,7 @@ export async function authenticateGitHub(
       encryptedAccessToken: user.encryptedAccessToken,
       accessTokenIv: user.accessTokenIv,
       accessTokenAuthTag: user.accessTokenAuthTag,
+      tokenEncryptionVersion: user.tokenEncryptionVersion ?? 1,
     });
     request.githubUser = {
       githubId: user.githubId,

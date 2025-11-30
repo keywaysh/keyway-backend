@@ -22,7 +22,7 @@ import { signState, verifyState } from '../../../utils/state';
 import { config } from '../../../config';
 import { db, vaults, users } from '../../../db';
 import { eq } from 'drizzle-orm';
-import { NotFoundError, ForbiddenError } from '../../../lib';
+import { NotFoundError, ForbiddenError, BadRequestError } from '../../../lib';
 import { hasRepoAccess } from '../../../utils/github';
 import { providerConnections } from '../../../db/schema';
 import { and } from 'drizzle-orm';
@@ -208,10 +208,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
     }
 
     if (!query.code || !query.state) {
-      return reply.status(400).send({
-        error: 'MissingParams',
-        message: 'Missing code or state parameter',
-      });
+      throw new BadRequestError('Missing code or state parameter');
     }
 
     const provider = getProvider(providerName);
@@ -223,10 +220,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
       // Verify state
       const stateData = verifyState(query.state);
       if (!stateData || stateData.type !== 'provider_oauth' || stateData.provider !== providerName) {
-        return reply.status(400).send({
-          error: 'InvalidState',
-          message: 'Invalid or tampered state parameter',
-        });
+        throw new BadRequestError('Invalid or tampered state parameter');
       }
 
       // Exchange code for token
@@ -242,10 +236,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
       });
 
       if (!user) {
-        return reply.status(400).send({
-          error: 'UserNotFound',
-          message: 'User not found. Please log in again.',
-        });
+        throw new NotFoundError('User not found. Please log in again.');
       }
 
       // Store connection

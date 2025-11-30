@@ -72,13 +72,15 @@ NODE_ENV=development
 # Database (use Neon connection string)
 DATABASE_URL=postgresql://user:password@host/database
 
-# Encryption - Generate with: openssl rand -hex 32
-ENCRYPTION_KEY=your-64-character-hex-key-here
+# Crypto Service (gRPC encryption service)
+CRYPTO_SERVICE_URL=localhost:50051
+
+# JWT Secret for Keyway tokens (min 32 chars)
+JWT_SECRET=your-32-character-minimum-secret-here
 
 # GitHub OAuth
 GITHUB_CLIENT_ID=your_github_client_id
 GITHUB_CLIENT_SECRET=your_github_client_secret
-GITHUB_REDIRECT_URI=http://localhost:3000/auth/github/callback
 
 # PostHog (optional)
 POSTHOG_API_KEY=your_posthog_api_key
@@ -94,13 +96,14 @@ POSTHOG_HOST=https://app.posthog.com
    - **Authorization callback URL**: `http://localhost:3000/auth/github/callback`
 3. Save the Client ID and Client Secret
 
-### 4. Generate Encryption Key
+### 4. Start the Crypto Service
+
+The backend requires the `keyway-crypto` gRPC service for encryption. See [keyway-crypto](../keyway-crypto) for setup.
 
 ```bash
-openssl rand -hex 32
+# In keyway-crypto directory
+ENCRYPTION_KEY=$(openssl rand -hex 32) go run .
 ```
-
-Copy the output to `ENCRYPTION_KEY` in `.env`.
 
 ### 5. Run Database Migrations
 
@@ -136,10 +139,16 @@ GET /health
 **Response:**
 ```json
 {
-  "status": "ok",
-  "timestamp": "2024-01-01T00:00:00.000Z"
+  "status": "healthy",
+  "timestamp": "2024-01-01T00:00:00.000Z",
+  "environment": "production",
+  "database": "connected",
+  "crypto": "connected",
+  "cryptoVersion": "1.0.0"
 }
 ```
+
+Returns 503 if database is disconnected. Crypto service status is included but doesn't affect overall health status.
 
 ### Authentication
 
@@ -390,10 +399,12 @@ Railway will automatically:
 
 ### Encryption
 
+- **Service**: Dedicated `keyway-crypto` gRPC microservice
 - **Algorithm**: AES-256-GCM (authenticated encryption)
-- **Key**: 32-byte symmetric key loaded from environment
-- **IV**: Random 16-byte initialization vector per encryption
+- **Key**: 32-byte symmetric key stored only in crypto service
+- **IV**: Random 12-byte initialization vector per encryption
 - **Auth Tag**: 16-byte authentication tag for integrity
+- **Isolation**: Encryption key never leaves the crypto service
 
 ### Access Control
 
@@ -489,12 +500,13 @@ See [POSTHOG_CHECKLIST.md](./POSTHOG_CHECKLIST.md) for details.
 | `PORT` | No | Server port (default: 3000) |
 | `NODE_ENV` | No | Environment (development/production) |
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `ENCRYPTION_KEY` | Yes | 32-byte hex encryption key |
+| `CRYPTO_SERVICE_URL` | Yes | gRPC crypto service address (e.g., localhost:50051) |
+| `JWT_SECRET` | Yes | Secret for Keyway JWT tokens (min 32 chars) |
 | `GITHUB_CLIENT_ID` | Yes | GitHub OAuth client ID |
 | `GITHUB_CLIENT_SECRET` | Yes | GitHub OAuth client secret |
-| `GITHUB_REDIRECT_URI` | Yes | OAuth callback URL |
 | `POSTHOG_API_KEY` | No | PostHog API key for analytics |
 | `POSTHOG_HOST` | No | PostHog host (default: app.posthog.com) |
+| `RESEND_API_KEY` | No | Resend API key for welcome emails |
 
 ## Troubleshooting
 
@@ -502,12 +514,15 @@ See [POSTHOG_CHECKLIST.md](./POSTHOG_CHECKLIST.md) for details.
 
 Make sure you've created a `.env` file with your database connection string.
 
-### "ENCRYPTION_KEY must be 32 bytes"
+### "Crypto service unavailable"
 
-Generate a proper key:
+Make sure the `keyway-crypto` gRPC service is running:
 ```bash
-openssl rand -hex 32
+cd ../keyway-crypto
+ENCRYPTION_KEY=$(openssl rand -hex 32) go run .
 ```
+
+And that `CRYPTO_SERVICE_URL` points to it (default: `localhost:50051`).
 
 ### Migration errors
 

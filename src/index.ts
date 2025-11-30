@@ -192,6 +192,16 @@ fastify.setErrorHandler((error: Error & { statusCode?: number; validation?: unkn
 // Start server
 const start = async () => {
   try {
+    // Check database connectivity before starting
+    fastify.log.info('Checking database connectivity...');
+    try {
+      await dbConnection`SELECT 1`;
+      fastify.log.info('Database connection successful');
+    } catch (dbError) {
+      fastify.log.error({ err: dbError }, 'Database connection failed');
+      process.exit(1);
+    }
+
     // Initialize analytics
     initAnalytics();
 

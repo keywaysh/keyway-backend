@@ -47,17 +47,23 @@ export function sanitizeHeaders(headers: Record<string, any>): Record<string, an
 export function sanitizeError(error: any): any {
   if (!error) return error;
 
-  // Create a clean copy
+  // Create a clean copy with all useful debugging info
   const sanitized: any = {
     name: error.name,
     message: error.message,
     code: error.code,
     statusCode: error.statusCode,
+    type: error.type,
   };
 
-  // Include stack trace in non-production only (it may contain code paths but not secrets)
-  if (process.env.NODE_ENV !== 'production' && error.stack) {
+  // Always include stack trace - logs are private, not exposed to clients
+  if (error.stack) {
     sanitized.stack = error.stack;
+  }
+
+  // Include nested cause for better debugging
+  if (error.cause) {
+    sanitized.cause = sanitizeError(error.cause);
   }
 
   return sanitized;

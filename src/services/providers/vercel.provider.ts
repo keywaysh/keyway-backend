@@ -246,19 +246,20 @@ export const vercelProvider: Provider = {
   },
 
   async getUser(accessToken: string): Promise<ProviderUser> {
+    // Use OIDC userinfo endpoint for "Sign in with Vercel" tokens
     const data = await vercelFetch<{
-      user: {
-        id: string;
-        username: string;
-        email: string;
-        name?: string;
-      };
-    }>(`${VERCEL_API_BASE}/v2/user`, accessToken);
+      sub: string;              // User ID
+      email?: string;
+      email_verified?: boolean;
+      name?: string;
+      preferred_username?: string;
+      picture?: string;
+    }>(`${VERCEL_API_BASE}/login/oauth/userinfo`, accessToken);
 
     return {
-      id: data.user.id,
-      username: data.user.username,
-      email: data.user.email,
+      id: data.sub,
+      username: data.preferred_username || data.email || data.sub,
+      email: data.email,
     };
   },
 

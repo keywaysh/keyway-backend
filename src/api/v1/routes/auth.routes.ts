@@ -13,6 +13,20 @@ import { encryptAccessToken } from '../../../utils/tokenEncryption';
 import { signState, verifyState } from '../../../utils/state';
 import { sendWelcomeEmail } from '../../../utils/email';
 
+/**
+ * Get OAuth scopes based on GitHub App configuration
+ * When GitHub App is enabled, we only need user info (no repo access)
+ * When GitHub App is disabled (legacy), we need repo scope for access checks
+ */
+function getOAuthScopes(): string {
+  if (config.githubApp.enabled) {
+    // Minimal scopes: only need user identity
+    return 'read:user user:email';
+  }
+  // Legacy mode: need repo scope for access verification
+  return 'repo read:user user:email';
+}
+
 // Schemas
 const DeviceFlowStartSchema = z.object({
   repository: z.string().optional(),
@@ -286,7 +300,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const githubAuthUrl = new URL('https://github.com/login/oauth/authorize');
     githubAuthUrl.searchParams.set('client_id', config.github.clientId);
     githubAuthUrl.searchParams.set('redirect_uri', callbackUri);
-    githubAuthUrl.searchParams.set('scope', 'repo read:user user:email');
+    githubAuthUrl.searchParams.set('scope', getOAuthScopes());
     githubAuthUrl.searchParams.set('state', state);
 
     return reply.redirect(githubAuthUrl.toString());
@@ -463,7 +477,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const githubAuthUrl = new URL('https://github.com/login/oauth/authorize');
     githubAuthUrl.searchParams.set('client_id', config.github.clientId);
     githubAuthUrl.searchParams.set('redirect_uri', callbackUri);
-    githubAuthUrl.searchParams.set('scope', 'repo read:user user:email');
+    githubAuthUrl.searchParams.set('scope', getOAuthScopes());
     githubAuthUrl.searchParams.set('state', state);
 
     return reply.redirect(githubAuthUrl.toString());

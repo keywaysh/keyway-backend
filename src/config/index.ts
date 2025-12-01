@@ -21,9 +21,14 @@ const envSchema = z.object({
   // JWT for Keyway tokens
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
 
-  // GitHub OAuth
+  // GitHub OAuth (for user authentication - reduced scopes)
   GITHUB_CLIENT_ID: z.string().min(1, 'GITHUB_CLIENT_ID is required'),
   GITHUB_CLIENT_SECRET: z.string().min(1, 'GITHUB_CLIENT_SECRET is required'),
+
+  // GitHub App (for repo access verification)
+  GITHUB_APP_ID: z.string().optional(),
+  GITHUB_APP_PRIVATE_KEY: z.string().optional(),
+  GITHUB_APP_WEBHOOK_SECRET: z.string().optional(),
 
   // Analytics
   POSTHOG_API_KEY: z.string().optional(),
@@ -91,6 +96,20 @@ export const config = {
     clientSecret: env.GITHUB_CLIENT_SECRET,
     apiBaseUrl: 'https://api.github.com',
   },
+
+  githubApp: env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY
+    ? {
+        appId: env.GITHUB_APP_ID,
+        privateKey: env.GITHUB_APP_PRIVATE_KEY.replace(/\\n/g, '\n'), // Handle escaped newlines
+        webhookSecret: env.GITHUB_APP_WEBHOOK_SECRET,
+        enabled: true,
+      }
+    : {
+        appId: undefined,
+        privateKey: undefined,
+        webhookSecret: undefined,
+        enabled: false,
+      },
 
   analytics: {
     posthogApiKey: env.POSTHOG_API_KEY,

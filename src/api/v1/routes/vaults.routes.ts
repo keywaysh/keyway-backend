@@ -24,6 +24,8 @@ import {
   computeUserUsage,
 } from '../../../services';
 import { hasRepoAccess, getRepoInfo } from '../../../utils/github';
+import { isGitHubAppEnabled, getRepository as getRepoViaApp } from '../../../utils/githubApp';
+import { isAppInstalledOnRepo, getInstallationForRepo } from '../../../services/githubApp.service';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
 import { repoFullNameSchema, DEFAULT_ENVIRONMENTS } from '../../../types';
 import { getSecurityAlerts } from '../../../services/security.service';
@@ -142,7 +144,30 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const accessToken = request.accessToken!;
 
     // Get repo info from GitHub to determine visibility
-    const repoInfo = await getRepoInfo(accessToken, body.repoFullName);
+    // Use GitHub App if enabled (doesn't require repo scope on user token)
+    let repoInfo: { isPrivate: boolean; isOrganization: boolean } | null = null;
+
+    if (isGitHubAppEnabled()) {
+      const installCheck = await isAppInstalledOnRepo(body.repoFullName);
+      if (installCheck.installed && installCheck.installationId) {
+        const [repoData, installation] = await Promise.all([
+          getRepoViaApp(installCheck.installationId, body.repoFullName),
+          getInstallationForRepo(body.repoFullName),
+        ]);
+        if (repoData) {
+          repoInfo = {
+            isPrivate: repoData.private,
+            isOrganization: installation?.accountType === 'Organization',
+          };
+        }
+      }
+    }
+
+    // Fallback to OAuth if GitHub App didn't work
+    if (!repoInfo) {
+      repoInfo = await getRepoInfo(accessToken, body.repoFullName);
+    }
+
     if (!repoInfo) {
       throw new NotFoundError(`Repository '${body.repoFullName}' not found or you don't have access`);
     }

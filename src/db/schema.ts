@@ -85,6 +85,12 @@ export const billingStatusEnum = pgEnum('billing_status', [
   'trialing',
 ]);
 
+// GitHub App installation status
+export const appInstallationStatusEnum = pgEnum('app_installation_status', [
+  'active',
+  'suspended',
+]);
+
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   githubId: integer('github_id').notNull().unique(),
@@ -251,6 +257,28 @@ export const vaultSyncs = pgTable('vault_syncs', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// GitHub App installations (tracks where the app is installed)
+export const githubAppInstallations = pgTable('github_app_installations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  installationId: integer('installation_id').notNull().unique(), // GitHub's installation ID
+  accountType: text('account_type').notNull(), // 'User' or 'Organization'
+  accountLogin: text('account_login').notNull(), // username or org name
+  accountId: integer('account_id').notNull(), // GitHub account ID
+  status: appInstallationStatusEnum('status').notNull().default('active'),
+  suspendedAt: timestamp('suspended_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// Repositories accessible via GitHub App installation
+export const installationRepositories = pgTable('installation_repositories', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  installationId: uuid('installation_id').notNull().references(() => githubAppInstallations.id, { onDelete: 'cascade' }),
+  repoFullName: text('repo_full_name').notNull(), // "owner/repo"
+  repoId: integer('repo_id').notNull(), // GitHub repo ID
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
 // Sync logs (audit trail for each sync operation)
 export const syncLogs = pgTable('sync_logs', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -402,6 +430,17 @@ export const syncLogsRelations = relations(syncLogs, ({ one }) => ({
   }),
 }));
 
+export const githubAppInstallationsRelations = relations(githubAppInstallations, ({ many }) => ({
+  repositories: many(installationRepositories),
+}));
+
+export const installationRepositoriesRelations = relations(installationRepositories, ({ one }) => ({
+  installation: one(githubAppInstallations, {
+    fields: [installationRepositories.installationId],
+    references: [githubAppInstallations.id],
+  }),
+}));
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Vault = typeof vaults.$inferSelect;
@@ -437,3 +476,8 @@ export type VaultSync = typeof vaultSyncs.$inferSelect;
 export type NewVaultSync = typeof vaultSyncs.$inferInsert;
 export type SyncLog = typeof syncLogs.$inferSelect;
 export type NewSyncLog = typeof syncLogs.$inferInsert;
+export type GitHubAppInstallation = typeof githubAppInstallations.$inferSelect;
+export type NewGitHubAppInstallation = typeof githubAppInstallations.$inferInsert;
+export type InstallationRepository = typeof installationRepositories.$inferSelect;
+export type NewInstallationRepository = typeof installationRepositories.$inferInsert;
+export type AppInstallationStatus = typeof appInstallationStatusEnum.enumValues[number];

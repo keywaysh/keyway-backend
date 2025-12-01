@@ -6,7 +6,9 @@ import { decryptAccessToken } from '../utils/tokenEncryption';
 import { db, users, vaults } from '../db';
 import { eq } from 'drizzle-orm';
 import { hasEnvironmentPermission } from '../utils/permissions';
-import type { PermissionType } from '../db/schema';
+import type { PermissionType, CollaboratorRole } from '../db/schema';
+import { checkUserRepoAccess, isAppInstalledOnRepo } from '../services/githubApp.service';
+import { isGitHubAppEnabled } from '../utils/githubApp';
 
 // Extend Fastify request type
 declare module 'fastify' {
@@ -105,12 +107,19 @@ export async function authenticateGitHub(
 /**
  * Verify user has access to a repository (collaborator or admin)
  * Requires authenticateGitHub to be called first
+ *
+ * When GitHub App is enabled:
+ * - Uses installation token to verify collaborator access (no user token needed for repo access)
+ * - This proves we don't need access to user's repos via OAuth
+ *
+ * When GitHub App is not enabled (legacy/fallback):
+ * - Uses user's OAuth token to check repo access
  */
 export async function requireRepoAccess(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
-  if (!request.accessToken) {
+  if (!request.githubUser) {
     throw new UnauthorizedError('Authentication required');
   }
 
@@ -124,6 +133,34 @@ export async function requireRepoAccess(
 
   if (!repoFullName) {
     throw new ForbiddenError('Repository name required');
+  }
+
+  // Use GitHub App if enabled (preferred - proves no code access needed)
+  if (isGitHubAppEnabled()) {
+    // First check if app is installed on the repo
+    const installCheck = await isAppInstalledOnRepo(repoFullName);
+
+    if (!installCheck.installed) {
+      throw new ForbiddenError(
+        `GitHub App is not installed on this repository. Install at: ${installCheck.installUrl}`
+      );
+    }
+
+    // Check user access via installation token
+    const accessCheck = await checkUserRepoAccess(repoFullName, request.githubUser.username);
+
+    if (!accessCheck.hasAccess) {
+      throw new ForbiddenError(
+        `You do not have write access to this repository (permission: ${accessCheck.permission})`
+      );
+    }
+
+    return;
+  }
+
+  // Fallback: use user's OAuth token (legacy mode)
+  if (!request.accessToken) {
+    throw new UnauthorizedError('Authentication required');
   }
 
   const hasAccess = await hasRepoAccess(request.accessToken, repoFullName);
@@ -141,7 +178,7 @@ export async function requireAdminAccess(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
-  if (!request.accessToken) {
+  if (!request.githubUser) {
     throw new UnauthorizedError('Authentication required');
   }
 
@@ -157,6 +194,32 @@ export async function requireAdminAccess(
     throw new ForbiddenError('Repository name required');
   }
 
+  // Use GitHub App if enabled
+  if (isGitHubAppEnabled()) {
+    const installCheck = await isAppInstalledOnRepo(repoFullName);
+
+    if (!installCheck.installed) {
+      throw new ForbiddenError(
+        `GitHub App is not installed on this repository. Install at: ${installCheck.installUrl}`
+      );
+    }
+
+    const accessCheck = await checkUserRepoAccess(repoFullName, request.githubUser.username);
+
+    if (accessCheck.permission !== 'admin') {
+      throw new ForbiddenError(
+        `Only repository admins can perform this action (your permission: ${accessCheck.permission})`
+      );
+    }
+
+    return;
+  }
+
+  // Fallback: use user's OAuth token
+  if (!request.accessToken) {
+    throw new UnauthorizedError('Authentication required');
+  }
+
   const isAdmin = await hasAdminAccess(request.accessToken, repoFullName);
 
   if (!isAdmin) {
@@ -165,12 +228,28 @@ export async function requireAdminAccess(
 }
 
 /**
+ * Map GitHub permission string to CollaboratorRole
+ */
+function mapGitHubPermissionToRole(permission: string): CollaboratorRole | null {
+  const roleMap: Record<string, CollaboratorRole> = {
+    admin: 'admin',
+    maintain: 'maintain',
+    write: 'write',
+    push: 'write',  // GitHub sometimes returns 'push' for write access
+    triage: 'triage',
+    read: 'read',
+    pull: 'read',   // GitHub sometimes returns 'pull' for read access
+  };
+  return roleMap[permission] || null;
+}
+
+/**
  * Create middleware factory for environment-based permissions
  * Requires authenticateGitHub to be called first
  */
 export function requireEnvironmentAccess(permissionType: PermissionType) {
   return async function (request: FastifyRequest, reply: FastifyReply) {
-    if (!request.accessToken || !request.githubUser) {
+    if (!request.githubUser) {
       throw new UnauthorizedError('Authentication required');
     }
 
@@ -193,12 +272,37 @@ export function requireEnvironmentAccess(permissionType: PermissionType) {
       throw new ForbiddenError('Environment name required');
     }
 
-    // Get user's role for this repository
-    const userRole = await getUserRole(
-      request.accessToken,
-      repoFullName,
-      request.githubUser.username
-    );
+    let userRole: CollaboratorRole | null = null;
+
+    // Use GitHub App if enabled
+    if (isGitHubAppEnabled()) {
+      const installCheck = await isAppInstalledOnRepo(repoFullName);
+
+      if (!installCheck.installed) {
+        throw new ForbiddenError(
+          `GitHub App is not installed on this repository. Install at: ${installCheck.installUrl}`
+        );
+      }
+
+      const accessCheck = await checkUserRepoAccess(repoFullName, request.githubUser.username);
+
+      if (!accessCheck.hasAccess) {
+        throw new ForbiddenError('You do not have access to this repository');
+      }
+
+      userRole = mapGitHubPermissionToRole(accessCheck.permission);
+    } else {
+      // Fallback: use user's OAuth token
+      if (!request.accessToken) {
+        throw new UnauthorizedError('Authentication required');
+      }
+
+      userRole = await getUserRole(
+        request.accessToken,
+        repoFullName,
+        request.githubUser.username
+      );
+    }
 
     if (!userRole) {
       throw new ForbiddenError('You do not have access to this repository');

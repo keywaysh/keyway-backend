@@ -166,9 +166,8 @@ export const vercelProvider: Provider = {
       client_id: config.vercel?.clientId || '',
       redirect_uri: redirectUri,
       state,
-      scope: 'user:read', // Minimal scope, env var access is implicit with project access
     });
-    return `${VERCEL_OAUTH_BASE}/integrations/install/new?${params.toString()}`;
+    return `${VERCEL_API_BASE}/oauth/authorize?${params.toString()}`;
   },
 
   async exchangeCodeForToken(code: string, redirectUri: string): Promise<TokenResponse> {

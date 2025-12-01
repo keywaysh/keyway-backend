@@ -110,6 +110,7 @@ vi.mock('../../src/utils/state', () => ({
     provider: 'vercel',
     userId: mockUser.githubId,
     redirectUri: null,
+    codeVerifier: 'test-code-verifier-123',
   }),
 }));
 
@@ -130,7 +131,10 @@ vi.mock('../../src/services/providers', () => ({
   getProvider: vi.fn().mockReturnValue({
     name: 'vercel',
     displayName: 'Vercel',
-    getAuthorizationUrl: vi.fn().mockReturnValue('https://vercel.com/oauth/authorize?...'),
+    getAuthorizationUrl: vi.fn().mockReturnValue({
+      url: 'https://vercel.com/oauth/authorize?client_id=test&state=',
+      codeVerifier: 'test-code-verifier-123',
+    }),
     exchangeCodeForToken: vi.fn().mockResolvedValue({
       accessToken: 'vercel-access-token',
       tokenType: 'Bearer',

@@ -26,20 +26,43 @@ describe('Vercel Provider', () => {
   });
 
   describe('getAuthorizationUrl', () => {
-    it('should return correct authorization URL', async () => {
+    it('should return correct OAuth authorization URL with PKCE', async () => {
       const { vercelProvider } = await import('../src/services/providers/vercel.provider');
 
-      const url = vercelProvider.getAuthorizationUrl('test-state', 'http://localhost:3000/callback');
+      const result = vercelProvider.getAuthorizationUrl('test-state', 'http://localhost:3000/callback');
 
-      expect(url).toContain('vercel.com/integrations/install/new');
-      expect(url).toContain('client_id=test-client-id');
-      expect(url).toContain('state=test-state');
-      expect(url).toContain('redirect_uri=');
+      // Should return object with url and codeVerifier
+      expect(result).toHaveProperty('url');
+      expect(result).toHaveProperty('codeVerifier');
+      expect(typeof result.codeVerifier).toBe('string');
+      expect(result.codeVerifier!.length).toBeGreaterThan(0);
+
+      // URL should be the correct OAuth endpoint (not marketplace integrations)
+      expect(result.url).toContain('https://vercel.com/oauth/authorize');
+      expect(result.url).not.toContain('integrations/install/new');
+
+      // Should include required OAuth params
+      expect(result.url).toContain('client_id=test-client-id');
+      expect(result.url).toContain('response_type=code');
+      expect(result.url).toContain('redirect_uri=');
+
+      // Should include PKCE params
+      expect(result.url).toContain('code_challenge=');
+      expect(result.url).toContain('code_challenge_method=S256');
+    });
+
+    it('should generate different PKCE codes for each call', async () => {
+      const { vercelProvider } = await import('../src/services/providers/vercel.provider');
+
+      const result1 = vercelProvider.getAuthorizationUrl('state1', 'http://localhost:3000/callback');
+      const result2 = vercelProvider.getAuthorizationUrl('state2', 'http://localhost:3000/callback');
+
+      expect(result1.codeVerifier).not.toBe(result2.codeVerifier);
     });
   });
 
   describe('exchangeCodeForToken', () => {
-    it('should exchange code for access token', async () => {
+    it('should exchange code for access token using correct endpoint', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
@@ -54,12 +77,33 @@ describe('Vercel Provider', () => {
 
       expect(result.accessToken).toBe('vercel-access-token');
       expect(result.tokenType).toBe('Bearer');
+
+      // Should use the correct OIDC token endpoint (not /v2/oauth/access_token)
       expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.vercel.com/v2/oauth/access_token',
+        'https://api.vercel.com/login/oauth/token',
         expect.objectContaining({
           method: 'POST',
         })
       );
+    });
+
+    it('should include code_verifier when provided (PKCE)', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          access_token: 'vercel-access-token',
+          token_type: 'Bearer',
+        }),
+      });
+
+      const { vercelProvider } = await import('../src/services/providers/vercel.provider');
+
+      await vercelProvider.exchangeCodeForToken('auth-code', 'http://localhost:3000/callback', 'test-code-verifier');
+
+      // Verify the body includes code_verifier
+      const fetchCall = mockFetch.mock.calls[0];
+      const body = fetchCall[1].body as URLSearchParams;
+      expect(body.get('code_verifier')).toBe('test-code-verifier');
     });
 
     it('should throw error on failed token exchange', async () => {
@@ -80,16 +124,17 @@ describe('Vercel Provider', () => {
   });
 
   describe('getUser', () => {
-    it('should fetch user info', async () => {
+    it('should fetch user info from OIDC userinfo endpoint', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
-          user: {
-            id: 'user-123',
-            username: 'testuser',
-            email: 'test@vercel.com',
-            name: 'Test User',
-          },
+          // OIDC userinfo response format
+          sub: 'user-123',
+          email: 'test@vercel.com',
+          email_verified: true,
+          name: 'Test User',
+          preferred_username: 'testuser',
+          picture: 'https://vercel.com/api/avatar/123',
         }),
       });
 
@@ -100,6 +145,49 @@ describe('Vercel Provider', () => {
       expect(user.id).toBe('user-123');
       expect(user.username).toBe('testuser');
       expect(user.email).toBe('test@vercel.com');
+
+      // Should use the correct OIDC userinfo endpoint (not /v2/user)
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.vercel.com/login/oauth/userinfo',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer access-token',
+          }),
+        })
+      );
+    });
+
+    it('should fallback to email or sub when preferred_username is missing', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sub: 'user-456',
+          email: 'fallback@vercel.com',
+        }),
+      });
+
+      const { vercelProvider } = await import('../src/services/providers/vercel.provider');
+
+      const user = await vercelProvider.getUser('access-token');
+
+      expect(user.id).toBe('user-456');
+      expect(user.username).toBe('fallback@vercel.com'); // Falls back to email
+    });
+
+    it('should fallback to sub when both preferred_username and email are missing', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sub: 'user-789',
+        }),
+      });
+
+      const { vercelProvider } = await import('../src/services/providers/vercel.provider');
+
+      const user = await vercelProvider.getUser('access-token');
+
+      expect(user.id).toBe('user-789');
+      expect(user.username).toBe('user-789'); // Falls back to sub
     });
   });
 

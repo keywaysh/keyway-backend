@@ -130,9 +130,23 @@ export function getAllProviders(): Provider[] {
   return Array.from(providers.values());
 }
 
-export function getAvailableProviders(): { name: string; displayName: string }[] {
+export function getAvailableProviders(): { name: string; displayName: string; configured: boolean }[] {
   return getAllProviders().map(p => ({
     name: p.name,
     displayName: p.displayName,
+    configured: isProviderConfigured(p.name),
   }));
+}
+
+function isProviderConfigured(name: string): boolean {
+  // Dynamic import to avoid circular dependency
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { config } = require('../../config');
+
+  switch (name) {
+    case 'vercel':
+      return !!(config.vercel?.clientId && config.vercel?.clientSecret);
+    default:
+      return false;
+  }
 }

@@ -2,6 +2,7 @@ import Stripe from 'stripe';
 import { eq } from 'drizzle-orm';
 import { db, users, subscriptions, stripeWebhookEvents, type UserPlan } from '../db';
 import { config } from '../config';
+import { trackEvent, identifyUser, AnalyticsEvents } from '../utils/analytics';
 
 // Initialize Stripe client (only if configured)
 const stripe = config.stripe
@@ -245,6 +246,15 @@ async function handleSubscriptionChange(
       },
     });
 
+  // Get current user plan before update
+  const [currentUser] = await db
+    .select({ plan: users.plan })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  const previousPlan = currentUser?.plan || 'free';
+
   // Update user plan and billing status
   await db
     .update(users)
@@ -256,6 +266,17 @@ async function handleSubscriptionChange(
     .where(eq(users.id, userId));
 
   console.log(`[Billing] Updated user ${userId} to plan ${plan} (status: ${billingStatus})`);
+
+  // Track billing upgrade event
+  if (previousPlan === 'free' && plan !== 'free') {
+    trackEvent(userId, AnalyticsEvents.BILLING_UPGRADE, {
+      previousPlan,
+      newPlan: plan,
+      billingInterval: subscription.items.data[0]?.price.recurring?.interval || 'unknown',
+    });
+    // Update user identity with new plan
+    identifyUser(userId, { plan });
+  }
 }
 
 /**
@@ -269,6 +290,15 @@ async function handleSubscriptionDeleted(
     console.warn('[Billing] Deleted subscription missing keyway_user_id:', subscription.id);
     return;
   }
+
+  // Get current user plan before downgrade
+  const [currentUser] = await db
+    .select({ plan: users.plan })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  const previousPlan = currentUser?.plan || 'pro';
 
   // Delete subscription record
   await db
@@ -286,6 +316,15 @@ async function handleSubscriptionDeleted(
     .where(eq(users.id, userId));
 
   console.log(`[Billing] Downgraded user ${userId} to free plan (subscription deleted)`);
+
+  // Track billing downgrade event
+  trackEvent(userId, AnalyticsEvents.BILLING_DOWNGRADE, {
+    previousPlan,
+    newPlan: 'free',
+    reason: 'subscription_deleted',
+  });
+  // Update user identity with new plan
+  identifyUser(userId, { plan: 'free' });
 }
 
 /**
@@ -316,6 +355,11 @@ async function handlePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
     .where(eq(users.id, user.id));
 
   console.log(`[Billing] Marked user ${user.id} as past_due (payment failed)`);
+
+  // Track payment failed event
+  trackEvent(user.id, AnalyticsEvents.BILLING_PAYMENT_FAILED, {
+    invoiceId: invoice.id,
+  });
 }
 
 /**

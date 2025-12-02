@@ -103,6 +103,10 @@ export const AnalyticsEvents = {
   API_ERROR: 'api_error',
   DEVICE_VERIFY_PAGE_VIEW: 'api_device_verify_page_view',
   DEVICE_VERIFY_SUBMIT: 'api_device_verify_submit',
+  // Billing events
+  BILLING_UPGRADE: 'billing_upgrade',
+  BILLING_DOWNGRADE: 'billing_downgrade',
+  BILLING_PAYMENT_FAILED: 'billing_payment_failed',
 } as const;
 
 /**

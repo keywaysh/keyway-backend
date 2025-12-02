@@ -141,6 +141,13 @@
       "when": 1764538140000,
       "tag": "0019_preserve_audit_logs",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "5",
+      "when": 1764600000000,
+      "tag": "0020_add_stripe_subscriptions",
+      "breakpoints": true
     }
   ]
 }

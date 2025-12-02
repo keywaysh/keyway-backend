@@ -82,6 +82,20 @@ fastify.register(formbody);
 // Register cookie parser
 fastify.register(cookie);
 
+// Custom JSON parser that preserves raw body for Stripe webhook signature verification
+fastify.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, body, done) => {
+  if (req.routeOptions?.config?.rawBody) {
+    // Store raw body for webhook signature verification
+    (req as any).rawBody = body;
+  }
+  try {
+    const json = JSON.parse(body.toString());
+    done(null, json);
+  } catch (err: any) {
+    done(err, undefined);
+  }
+});
+
 // Add request ID to all responses
 fastify.addHook('onSend', async (request, reply) => {
   reply.header('X-Request-ID', request.id);

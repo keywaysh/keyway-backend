@@ -37,6 +37,22 @@ export {
   getUserUsage,
   getUserUsageResponse,
   checkVaultCreationAllowed,
+  canWriteToVault,
+  getPrivateVaultAccess,
   type UserUsage,
   type UserUsageResponse,
+  type PrivateVaultAccess,
 } from './usage.service';
+
+// Billing service
+export {
+  isStripeEnabled,
+  getOrCreateStripeCustomer,
+  createCheckoutSession,
+  createPortalSession,
+  getUserSubscription,
+  isEventProcessed,
+  constructWebhookEvent,
+  handleWebhookEvent,
+  getAvailablePrices,
+} from './billing.service';

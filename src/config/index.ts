@@ -1,8 +1,16 @@
 import * as dotenv from 'dotenv';
+import * as fs from 'fs';
+import * as path from 'path';
 import { z } from 'zod';
 
 // Load environment variables
-dotenv.config();
+// Priority: .env.local > .env (for local development overrides)
+const envLocalPath = path.resolve(process.cwd(), '.env.local');
+if (fs.existsSync(envLocalPath)) {
+  dotenv.config({ path: envLocalPath });
+} else {
+  dotenv.config();
+}
 
 // Environment schema with validation
 const envSchema = z.object({
@@ -47,6 +55,14 @@ const envSchema = z.object({
 
   // Admin
   ADMIN_SECRET: z.string().min(32).optional(),
+
+  // Stripe Billing
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_PRICE_PRO_MONTHLY: z.string().optional(),
+  STRIPE_PRICE_PRO_YEARLY: z.string().optional(),
+  STRIPE_PRICE_TEAM_MONTHLY: z.string().optional(),
+  STRIPE_PRICE_TEAM_YEARLY: z.string().optional(),
 });
 
 // Validate environment variables
@@ -124,6 +140,19 @@ export const config = {
     secret: env.ADMIN_SECRET,
     enabled: !!env.ADMIN_SECRET,
   },
+
+  stripe: env.STRIPE_SECRET_KEY
+    ? {
+        secretKey: env.STRIPE_SECRET_KEY,
+        webhookSecret: env.STRIPE_WEBHOOK_SECRET,
+        prices: {
+          proMonthly: env.STRIPE_PRICE_PRO_MONTHLY,
+          proYearly: env.STRIPE_PRICE_PRO_YEARLY,
+          teamMonthly: env.STRIPE_PRICE_TEAM_MONTHLY,
+          teamYearly: env.STRIPE_PRICE_TEAM_YEARLY,
+        },
+      }
+    : undefined,
 } as const;
 
 // Type export for usage in other files

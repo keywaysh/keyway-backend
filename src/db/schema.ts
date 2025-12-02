@@ -251,6 +251,27 @@ export const vaultSyncs = pgTable('vault_syncs', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// Stripe subscriptions
+export const subscriptions = pgTable('subscriptions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }).unique(),
+  stripeSubscriptionId: text('stripe_subscription_id').notNull().unique(),
+  stripePriceId: text('stripe_price_id').notNull(),
+  status: text('status').notNull(),
+  currentPeriodEnd: timestamp('current_period_end').notNull(),
+  cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// Stripe webhook events for idempotency
+export const stripeWebhookEvents = pgTable('stripe_webhook_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  stripeEventId: text('stripe_event_id').notNull().unique(),
+  eventType: text('event_type').notNull(),
+  processedAt: timestamp('processed_at').notNull().defaultNow(),
+});
+
 // Sync logs (audit trail for each sync operation)
 export const syncLogs = pgTable('sync_logs', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -278,6 +299,14 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   securityAlerts: many(securityAlerts),
   usageMetrics: one(usageMetrics),
   providerConnections: many(providerConnections),
+  subscription: one(subscriptions),
+}));
+
+export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
+  user: one(users, {
+    fields: [subscriptions.userId],
+    references: [users.id],
+  }),
 }));
 
 export const usageMetricsRelations = relations(usageMetrics, ({ one }) => ({
@@ -437,3 +466,7 @@ export type VaultSync = typeof vaultSyncs.$inferSelect;
 export type NewVaultSync = typeof vaultSyncs.$inferInsert;
 export type SyncLog = typeof syncLogs.$inferSelect;
 export type NewSyncLog = typeof syncLogs.$inferInsert;
+export type Subscription = typeof subscriptions.$inferSelect;
+export type NewSubscription = typeof subscriptions.$inferInsert;
+export type StripeWebhookEvent = typeof stripeWebhookEvents.$inferSelect;
+export type NewStripeWebhookEvent = typeof stripeWebhookEvents.$inferInsert;

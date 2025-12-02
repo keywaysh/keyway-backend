@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { UnauthorizedError, ForbiddenError } from '../lib';
-import { getUserFromToken, hasRepoAccess, hasAdminAccess, getUserRole } from '../utils/github';
+import { getUserFromToken, hasAdminAccess, getUserRole } from '../utils/github';
 import { verifyKeywayToken } from '../utils/jwt';
 import { decryptAccessToken } from '../utils/tokenEncryption';
 import { db, users, vaults } from '../db';
@@ -103,37 +103,6 @@ export async function authenticateGitHub(
     // Any other JWT error (expired, malformed, wrong secret) - clear cookie and return 401
     reply.clearCookie('keyway_session', { path: '/' });
     throw new UnauthorizedError('Invalid or expired token');
-  }
-}
-
-/**
- * Verify user has access to a repository (collaborator or admin)
- * Requires authenticateGitHub to be called first
- */
-export async function requireRepoAccess(
-  request: FastifyRequest,
-  reply: FastifyReply
-) {
-  if (!request.accessToken) {
-    throw new UnauthorizedError('Authentication required');
-  }
-
-  // Get repo name from params (encoded) or body
-  const params = request.params as { repo?: string };
-  const body = request.body as { repoFullName?: string };
-
-  const repoFullName = params.repo
-    ? decodeURIComponent(params.repo)
-    : body?.repoFullName;
-
-  if (!repoFullName) {
-    throw new ForbiddenError('Repository name required');
-  }
-
-  const hasAccess = await hasRepoAccess(request.accessToken, repoFullName);
-
-  if (!hasAccess) {
-    throw new ForbiddenError('You do not have access to this repository');
   }
 }
 

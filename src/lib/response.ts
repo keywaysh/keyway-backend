@@ -88,33 +88,3 @@ export function sendNoContent(reply: FastifyReply): FastifyReply {
   return reply.status(204).send();
 }
 
-/**
- * Response helper for accepted (202) - async operations
- */
-export function sendAccepted<T>(
-  reply: FastifyReply,
-  data: T,
-  options?: {
-    requestId?: string;
-  }
-): FastifyReply {
-  const response: ApiResponse<T> = { data };
-
-  if (options?.requestId) {
-    response.meta = { requestId: options.requestId };
-  }
-
-  return reply.status(202).send(response);
-}
-
-/**
- * Legacy response format for backwards compatibility
- * Use during migration, then switch to sendData/sendPaginatedData
- */
-export function sendLegacy<T>(
-  reply: FastifyReply,
-  data: T,
-  status = 200
-): FastifyReply {
-  return reply.status(status).send(data);
-}

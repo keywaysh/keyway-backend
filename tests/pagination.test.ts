@@ -2,8 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   parsePagination,
   buildPaginationMeta,
-  hasMoreResults,
-  getPaginationParams,
   PAGINATION_DEFAULTS,
 } from '../src/lib/pagination';
 
@@ -89,31 +87,4 @@ describe('Pagination Utils', () => {
     });
   });
 
-  describe('hasMoreResults', () => {
-    it('should return true when more results exist', () => {
-      expect(hasMoreResults(0, 10, 100)).toBe(true);
-      expect(hasMoreResults(50, 10, 100)).toBe(true);
-    });
-
-    it('should return false when no more results', () => {
-      expect(hasMoreResults(90, 10, 100)).toBe(false);
-      expect(hasMoreResults(0, 100, 100)).toBe(false);
-    });
-
-    it('should return false when returned less than expected', () => {
-      expect(hasMoreResults(95, 5, 100)).toBe(false);
-    });
-  });
-
-  describe('getPaginationParams', () => {
-    it('should return limit and offset for SQL', () => {
-      const query = { limit: 25, offset: 50 };
-      const params = getPaginationParams(query);
-
-      expect(params).toEqual({
-        limit: 25,
-        offset: 50,
-      });
-    });
-  });
 });

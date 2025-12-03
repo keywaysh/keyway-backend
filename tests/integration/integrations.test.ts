@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
+import { createTestApp } from '../helpers/testApp';
 import { mockUser, mockVault, createMockDb, createMockGitHubUtils } from '../helpers/mocks';
 
 // Mock connection data
@@ -223,7 +224,7 @@ describe('Integration Routes', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    app = Fastify({ logger: false });
+    app = await createTestApp();
 
     const { integrationsRoutes } = await import('../../src/api/v1/routes/integrations.routes');
     await app.register(integrationsRoutes, { prefix: '/v1/integrations' });
@@ -243,8 +244,11 @@ describe('Integration Routes', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.providers).toBeInstanceOf(Array);
-      expect(body.providers[0]).toHaveProperty('name', 'vercel');
+      // Response uses wrapper format
+      expect(body).toHaveProperty('data');
+      expect(body).toHaveProperty('meta');
+      expect(body.data.providers).toBeInstanceOf(Array);
+      expect(body.data.providers[0]).toHaveProperty('name', 'vercel');
     });
   });
 
@@ -257,20 +261,22 @@ describe('Integration Routes', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.connections).toBeInstanceOf(Array);
+      // Response uses wrapper format
+      expect(body).toHaveProperty('data');
+      expect(body.data.connections).toBeInstanceOf(Array);
     });
   });
 
   describe('DELETE /v1/integrations/connections/:id', () => {
-    it('should delete a connection', async () => {
+    it('should delete a connection and return 204', async () => {
       const response = await app.inject({
         method: 'DELETE',
         url: `/v1/integrations/connections/${mockConnection.id}`,
       });
 
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.body);
-      expect(body.success).toBe(true);
+      // DELETE returns 204 No Content
+      expect(response.statusCode).toBe(204);
+      expect(response.body).toBe('');
     });
 
     it('should return 404 for non-existent connection', async () => {
@@ -319,8 +325,11 @@ describe('Integration Routes', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.projects).toBeInstanceOf(Array);
-      expect(body.projects[0]).toHaveProperty('id', 'prj_123');
+      // Response uses wrapper format
+      expect(body).toHaveProperty('data');
+      expect(body).toHaveProperty('meta');
+      expect(body.data.projects).toBeInstanceOf(Array);
+      expect(body.data.projects[0]).toHaveProperty('id', 'prj_123');
     });
   });
 

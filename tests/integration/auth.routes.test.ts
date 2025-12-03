@@ -376,9 +376,9 @@ describe('Auth Routes', () => {
         url: '/v1/auth/logout',
       });
 
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.body);
-      expect(body.success).toBe(true);
+      // Logout returns 204 No Content
+      expect(response.statusCode).toBe(204);
+      expect(response.body).toBe('');
 
       // Check that Set-Cookie headers are present to clear cookies
       const cookies = response.headers['set-cookie'];

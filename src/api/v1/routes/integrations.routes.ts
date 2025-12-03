@@ -26,6 +26,7 @@ import { NotFoundError, ForbiddenError, BadRequestError } from '../../../lib';
 import { hasRepoAccess } from '../../../utils/github';
 import { providerConnections } from '../../../db/schema';
 import { and } from 'drizzle-orm';
+import { sendData, sendNoContent } from '../../../lib/response';
 
 // Allowed redirect origins for OAuth callbacks
 const ALLOWED_REDIRECT_ORIGINS = [
@@ -96,10 +97,10 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
    * GET /integrations
    * List available providers
    */
-  fastify.get('/', async () => {
-    return {
+  fastify.get('/', async (request, reply) => {
+    return sendData(reply, {
       providers: getAvailableProviders(),
-    };
+    }, { requestId: request.id });
   });
 
   /**
@@ -108,9 +109,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/connections', {
     preHandler: [authenticateGitHub],
-  }, async (request) => {
-    const userId = request.githubUser!.githubId.toString();
-
+  }, async (request, reply) => {
     // Get user from DB to get the UUID
     const user = await db.query.users.findFirst({
       where: eq(users.githubId, request.githubUser!.githubId),
@@ -121,7 +120,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
     }
 
     const connections = await listConnections(user.id);
-    return { connections };
+    return sendData(reply, { connections }, { requestId: request.id });
   });
 
   /**
@@ -147,7 +146,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
       throw new NotFoundError('Connection not found');
     }
 
-    return { success: true };
+    return sendNoContent(reply);
   });
 
   /**
@@ -290,7 +289,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/connections/:id/projects', {
     preHandler: [authenticateGitHub],
-  }, async (request) => {
+  }, async (request, reply) => {
     const { id } = request.params as { id: string };
 
     // Get the authenticated user
@@ -304,7 +303,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
 
     // listProviderProjects now requires userId for ownership validation
     const projects = await listProviderProjects(id, user.id);
-    return { projects };
+    return sendData(reply, { projects }, { requestId: request.id });
   });
 
   /**
@@ -313,7 +312,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/vaults/:owner/:repo/sync/status', {
     preHandler: [authenticateGitHub],
-  }, async (request) => {
+  }, async (request, reply) => {
     const { owner, repo } = request.params as { owner: string; repo: string };
     const query = SyncStatusQuerySchema.parse(request.query);
 
@@ -336,7 +335,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
       user.id
     );
 
-    return status;
+    return sendData(reply, status, { requestId: request.id });
   });
 
   /**
@@ -345,7 +344,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/vaults/:owner/:repo/sync/preview', {
     preHandler: [authenticateGitHub],
-  }, async (request) => {
+  }, async (request, reply) => {
     const { owner, repo } = request.params as { owner: string; repo: string };
     const query = SyncPreviewQuerySchema.parse(request.query);
 
@@ -371,7 +370,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
       user.id
     );
 
-    return preview;
+    return sendData(reply, preview, { requestId: request.id });
   });
 
   /**
@@ -380,7 +379,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
    */
   fastify.post('/vaults/:owner/:repo/sync', {
     preHandler: [authenticateGitHub],
-  }, async (request) => {
+  }, async (request, reply) => {
     const { owner, repo } = request.params as { owner: string; repo: string };
     const body = SyncBodySchema.parse(request.body);
 
@@ -417,7 +416,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
       user.id
     );
 
-    return {
+    return sendData(reply, {
       success: result.status === 'success',
       stats: {
         created: result.created,
@@ -427,7 +426,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
         total: result.created + result.updated + result.deleted,
       },
       error: result.error,
-    };
+    }, { requestId: request.id });
   });
 }
 

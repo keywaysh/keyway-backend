@@ -12,6 +12,7 @@ import { authenticateGitHub } from '../../../middleware/auth';
 import { encryptAccessToken } from '../../../utils/tokenEncryption';
 import { signState, verifyState } from '../../../utils/state';
 import { sendWelcomeEmail } from '../../../utils/email';
+import { sendData, sendNoContent } from '../../../lib/response';
 
 // Schemas
 const DeviceFlowStartSchema = z.object({
@@ -475,11 +476,11 @@ export async function authRoutes(fastify: FastifyInstance) {
    */
   fastify.post('/token/validate', {
     preHandler: [authenticateGitHub],
-  }, async (request) => {
-    return {
+  }, async (request, reply) => {
+    return sendData(reply, {
       username: request.githubUser!.username,
       githubId: request.githubUser!.githubId,
-    };
+    }, { requestId: request.id });
   });
 
   /**
@@ -519,7 +520,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       domain,
     });
 
-    return { success: true, message: 'Logged out successfully' };
+    return sendNoContent(reply);
   });
 }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import Fastify, { FastifyInstance } from 'fastify';
+import { FastifyInstance } from 'fastify';
+import { createTestApp } from '../helpers/testApp';
 
 // Use vi.hoisted for mocks that need to be available in vi.mock
 const { mockEncrypt, mockDecrypt } = vi.hoisted(() => ({
@@ -16,6 +17,14 @@ vi.mock('../../src/config', () => ({
     },
     server: {
       isDevelopment: true,
+    },
+    github: {
+      apiBaseUrl: 'https://api.github.com',
+      clientId: 'test-client-id',
+      clientSecret: 'test-client-secret',
+    },
+    cors: {
+      allowedOrigins: [],
     },
   },
 }));
@@ -74,7 +83,7 @@ describe('Admin Routes', () => {
     });
     mockDecrypt.mockResolvedValue('decrypted-value');
 
-    app = Fastify({ logger: false });
+    app = await createTestApp();
 
     const { adminRoutes } = await import('../../src/api/v1/routes/admin.routes');
     await app.register(adminRoutes, { prefix: '/v1/admin' });
@@ -119,17 +128,24 @@ describe('Admin Routes', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.success).toBe(true);
-      expect(body).toHaveProperty('targetVersion');
-      expect(body).toHaveProperty('secrets');
-      expect(body).toHaveProperty('providerTokens');
-      expect(body).toHaveProperty('userTokens');
+
+      // Verify response wrapper format
+      expect(body).toHaveProperty('data');
+      expect(body).toHaveProperty('meta');
+      expect(body.meta).toHaveProperty('requestId');
+
+      // Verify data contents
+      expect(body.data.success).toBe(true);
+      expect(body.data).toHaveProperty('targetVersion');
+      expect(body.data).toHaveProperty('secrets');
+      expect(body.data).toHaveProperty('providerTokens');
+      expect(body.data).toHaveProperty('userTokens');
     });
 
-    it('should support dryRun query parameter', async () => {
+    it('should support dry_run query parameter', async () => {
       const response = await app.inject({
         method: 'POST',
-        url: '/v1/admin/rotate-key?dryRun=true',
+        url: '/v1/admin/rotate-key?dry_run=true',
         headers: {
           'x-admin-secret': VALID_ADMIN_SECRET,
         },
@@ -137,14 +153,14 @@ describe('Admin Routes', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.dryRun).toBe(true);
-      expect(body.secrets.rotated).toBe(0); // Dry run doesn't rotate
+      expect(body.data.dryRun).toBe(true);
+      expect(body.data.secrets.rotated).toBe(0); // Dry run doesn't rotate
     });
 
-    it('should support batchSize query parameter', async () => {
+    it('should support batch_size query parameter', async () => {
       const response = await app.inject({
         method: 'POST',
-        url: '/v1/admin/rotate-key?batchSize=10',
+        url: '/v1/admin/rotate-key?batch_size=10',
         headers: {
           'x-admin-secret': VALID_ADMIN_SECRET,
         },
@@ -165,18 +181,22 @@ describe('Admin Routes', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
 
-      // Check structure
-      expect(body.secrets).toHaveProperty('total');
-      expect(body.secrets).toHaveProperty('rotated');
-      expect(body.secrets).toHaveProperty('failed');
+      // Check wrapper structure
+      expect(body).toHaveProperty('data');
+      expect(body).toHaveProperty('meta');
 
-      expect(body.providerTokens).toHaveProperty('total');
-      expect(body.providerTokens).toHaveProperty('rotated');
-      expect(body.providerTokens).toHaveProperty('failed');
+      // Check data structure
+      expect(body.data.secrets).toHaveProperty('total');
+      expect(body.data.secrets).toHaveProperty('rotated');
+      expect(body.data.secrets).toHaveProperty('failed');
 
-      expect(body.userTokens).toHaveProperty('total');
-      expect(body.userTokens).toHaveProperty('rotated');
-      expect(body.userTokens).toHaveProperty('failed');
+      expect(body.data.providerTokens).toHaveProperty('total');
+      expect(body.data.providerTokens).toHaveProperty('rotated');
+      expect(body.data.providerTokens).toHaveProperty('failed');
+
+      expect(body.data.userTokens).toHaveProperty('total');
+      expect(body.data.userTokens).toHaveProperty('rotated');
+      expect(body.data.userTokens).toHaveProperty('failed');
     });
 
     it('should report success=false when there are failures', async () => {
@@ -193,8 +213,8 @@ describe('Admin Routes', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.success).toBe(false);
-      expect(body.secrets.failed).toBeGreaterThan(0);
+      expect(body.data.success).toBe(false);
+      expect(body.data.secrets.failed).toBeGreaterThan(0);
     });
   });
 });

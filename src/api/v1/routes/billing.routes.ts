@@ -13,6 +13,13 @@ import {
   getAvailablePrices,
 } from '../../../services';
 import { config } from '../../../config';
+import { sendData } from '../../../lib/response';
+import {
+  ServiceUnavailableError,
+  BadRequestError,
+  ValidationError,
+  InternalError,
+} from '../../../lib/errors';
 
 // Extend FastifyContextConfig for rawBody support
 declare module 'fastify' {
@@ -42,16 +49,12 @@ export async function billingRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/prices', async (request, reply) => {
     if (!isStripeEnabled()) {
-      return reply.status(503).send({
-        error: 'SERVICE_UNAVAILABLE',
-        message: 'Billing is not currently available',
-        requestId: request.id,
-      });
+      throw new ServiceUnavailableError('Billing is not currently available');
     }
 
     const prices = getAvailablePrices();
 
-    return reply.send({
+    return sendData(reply, {
       prices: {
         pro: {
           monthly: {
@@ -67,7 +70,7 @@ export async function billingRoutes(fastify: FastifyInstance) {
         },
         // Team prices not exposed yet (Coming soon)
       },
-    });
+    }, { requestId: request.id });
   });
 
   /**
@@ -85,24 +88,24 @@ export async function billingRoutes(fastify: FastifyInstance) {
     });
 
     if (!user) {
-      return reply.send({
+      return sendData(reply, {
         subscription: null,
         plan: 'free',
         billingStatus: 'active',
-      });
+      }, { requestId: request.id });
     }
 
     if (!isStripeEnabled()) {
-      return reply.send({
+      return sendData(reply, {
         subscription: null,
         plan: user.plan,
         billingStatus: user.billingStatus,
-      });
+      }, { requestId: request.id });
     }
 
     const subscription = await getUserSubscription(user.id);
 
-    return reply.send({
+    return sendData(reply, {
       subscription: subscription ? {
         id: subscription.id,
         status: subscription.status,
@@ -112,7 +115,7 @@ export async function billingRoutes(fastify: FastifyInstance) {
       plan: user.plan,
       billingStatus: user.billingStatus,
       stripeCustomerId: user.stripeCustomerId,
-    });
+    }, { requestId: request.id });
   });
 
   /**
@@ -130,33 +133,20 @@ export async function billingRoutes(fastify: FastifyInstance) {
     });
 
     if (!isStripeEnabled()) {
-      return reply.status(503).send({
-        error: 'SERVICE_UNAVAILABLE',
-        message: 'Billing is not currently available',
-        requestId: request.id,
-      });
+      throw new ServiceUnavailableError('Billing is not currently available');
     }
 
     // Validate request body
     const parseResult = createCheckoutSessionSchema.safeParse(request.body);
     if (!parseResult.success) {
-      return reply.status(400).send({
-        error: 'VALIDATION_ERROR',
-        message: 'Invalid request body',
-        details: parseResult.error.flatten().fieldErrors,
-        requestId: request.id,
-      });
+      throw ValidationError.fromZodError(parseResult.error);
     }
 
     const { priceId, successUrl, cancelUrl } = parseResult.data;
 
     // Check if user already has an active subscription
     if (user && user.plan !== 'free' && user.billingStatus === 'active') {
-      return reply.status(400).send({
-        error: 'ALREADY_SUBSCRIBED',
-        message: 'You already have an active subscription. Use the billing portal to manage it.',
-        requestId: request.id,
-      });
+      throw new BadRequestError('You already have an active subscription. Use the billing portal to manage it.');
     }
 
     // Validate price ID is one we recognize
@@ -168,11 +158,7 @@ export async function billingRoutes(fastify: FastifyInstance) {
     ].filter(Boolean);
 
     if (!validPriceIds.includes(priceId)) {
-      return reply.status(400).send({
-        error: 'INVALID_PRICE',
-        message: 'Invalid price ID',
-        requestId: request.id,
-      });
+      throw new BadRequestError('Invalid price ID');
     }
 
     // Validate URLs are from allowed origins
@@ -181,25 +167,17 @@ export async function billingRoutes(fastify: FastifyInstance) {
       const successOrigin = new URL(successUrl).origin;
       const cancelOrigin = new URL(cancelUrl).origin;
       if (!allowedOrigins.includes(successOrigin) || !allowedOrigins.includes(cancelOrigin)) {
-        return reply.status(400).send({
-          error: 'INVALID_URL',
-          message: 'Redirect URLs must be from allowed origins',
-          requestId: request.id,
-        });
+        throw new BadRequestError('Redirect URLs must be from allowed origins');
       }
     }
 
-    try {
-      // Use existing user ID or we'll need to create user first via the service
-      const userId = user?.id;
-      if (!userId) {
-        return reply.status(400).send({
-          error: 'USER_NOT_FOUND',
-          message: 'Please log in to Keyway first to create your account',
-          requestId: request.id,
-        });
-      }
+    // Use existing user ID or we'll need to create user first via the service
+    const userId = user?.id;
+    if (!userId) {
+      throw new BadRequestError('Please log in to Keyway first to create your account');
+    }
 
+    try {
       const checkoutUrl = await createCheckoutSession(
         userId,
         user.email || `${user.username}@users.noreply.github.com`,
@@ -209,14 +187,10 @@ export async function billingRoutes(fastify: FastifyInstance) {
         cancelUrl
       );
 
-      return reply.send({ url: checkoutUrl });
+      return sendData(reply, { url: checkoutUrl }, { requestId: request.id });
     } catch (error) {
       console.error('[Billing] Failed to create checkout session:', error);
-      return reply.status(500).send({
-        error: 'CHECKOUT_FAILED',
-        message: 'Failed to create checkout session',
-        requestId: request.id,
-      });
+      throw new InternalError('Failed to create checkout session');
     }
   });
 
@@ -235,33 +209,20 @@ export async function billingRoutes(fastify: FastifyInstance) {
     });
 
     if (!isStripeEnabled()) {
-      return reply.status(503).send({
-        error: 'SERVICE_UNAVAILABLE',
-        message: 'Billing is not currently available',
-        requestId: request.id,
-      });
+      throw new ServiceUnavailableError('Billing is not currently available');
     }
 
     // Validate request body
     const parseResult = manageSchema.safeParse(request.body);
     if (!parseResult.success) {
-      return reply.status(400).send({
-        error: 'VALIDATION_ERROR',
-        message: 'Invalid request body',
-        details: parseResult.error.flatten().fieldErrors,
-        requestId: request.id,
-      });
+      throw ValidationError.fromZodError(parseResult.error);
     }
 
     const { returnUrl } = parseResult.data;
 
     // Check if user has a Stripe customer ID
     if (!user?.stripeCustomerId) {
-      return reply.status(400).send({
-        error: 'NO_BILLING_ACCOUNT',
-        message: 'No billing account found. Subscribe to a plan first.',
-        requestId: request.id,
-      });
+      throw new BadRequestError('No billing account found. Subscribe to a plan first.');
     }
 
     // Validate return URL is from allowed origins
@@ -269,24 +230,16 @@ export async function billingRoutes(fastify: FastifyInstance) {
     if (allowedOrigins.length > 0) {
       const returnOrigin = new URL(returnUrl).origin;
       if (!allowedOrigins.includes(returnOrigin)) {
-        return reply.status(400).send({
-          error: 'INVALID_URL',
-          message: 'Return URL must be from an allowed origin',
-          requestId: request.id,
-        });
+        throw new BadRequestError('Return URL must be from an allowed origin');
       }
     }
 
     try {
       const portalUrl = await createPortalSession(user.id, returnUrl);
-      return reply.send({ url: portalUrl });
+      return sendData(reply, { url: portalUrl }, { requestId: request.id });
     } catch (error) {
       console.error('[Billing] Failed to create portal session:', error);
-      return reply.status(500).send({
-        error: 'PORTAL_FAILED',
-        message: 'Failed to create billing portal session',
-        requestId: request.id,
-      });
+      throw new InternalError('Failed to create billing portal session');
     }
   });
 
@@ -294,6 +247,7 @@ export async function billingRoutes(fastify: FastifyInstance) {
    * POST /webhook
    * Handle Stripe webhook events
    * Note: This endpoint uses raw body for signature verification
+   * Note: Webhook format is intentionally different (Stripe-specific)
    */
   fastify.post('/webhook', {
     config: {
@@ -301,43 +255,32 @@ export async function billingRoutes(fastify: FastifyInstance) {
     },
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!isStripeEnabled()) {
-      return reply.status(503).send({
-        error: 'SERVICE_UNAVAILABLE',
-        message: 'Billing is not configured',
-      });
+      throw new ServiceUnavailableError('Billing is not configured');
     }
 
     const signature = request.headers['stripe-signature'];
     if (!signature || typeof signature !== 'string') {
-      return reply.status(400).send({
-        error: 'MISSING_SIGNATURE',
-        message: 'Missing Stripe signature header',
-      });
+      throw new BadRequestError('Missing Stripe signature header');
     }
 
     // Get raw body for signature verification
     const rawBody = (request as any).rawBody as Buffer;
     if (!rawBody) {
-      return reply.status(400).send({
-        error: 'MISSING_BODY',
-        message: 'Missing raw request body',
-      });
+      throw new BadRequestError('Missing raw request body');
     }
 
     try {
       const event = constructWebhookEvent(rawBody, signature);
       await handleWebhookEvent(event);
 
+      // Webhook response format (Stripe-specific)
       return reply.send({ received: true });
     } catch (error: any) {
       console.error('[Billing] Webhook error:', error.message);
 
       // Return 400 for signature verification errors
       if (error.message.includes('signature')) {
-        return reply.status(400).send({
-          error: 'INVALID_SIGNATURE',
-          message: 'Invalid webhook signature',
-        });
+        throw new BadRequestError('Invalid webhook signature');
       }
 
       // For other errors, still return 200 to prevent Stripe retries

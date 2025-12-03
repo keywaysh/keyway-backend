@@ -2,8 +2,10 @@ import { FastifyInstance } from 'fastify';
 import { requireAdminSecret, requireAdmin } from '../../../middleware/admin';
 import { rotateEncryptionKeys } from '../../../services/keyRotation';
 import { db, users, vaults, secrets, activityLogs, syncLogs, vaultSyncs } from '../../../db';
-import { count, desc, eq, sql, gt } from 'drizzle-orm';
+import { count, desc, eq, gt } from 'drizzle-orm';
 import { authenticateGitHub } from '../../../middleware/auth';
+import { sendData, sendPaginatedData } from '../../../lib/response';
+import { parsePagination, buildPaginationMeta } from '../../../lib/pagination';
 
 /**
  * Admin Routes
@@ -15,20 +17,20 @@ export async function adminRoutes(fastify: FastifyInstance) {
    * Rotate encryption keys to the current version
    *
    * Query params:
-   * - dryRun=true: Preview what would be rotated without making changes
-   * - batchSize=100: Number of records to process at a time
+   * - dry_run=true: Preview what would be rotated without making changes
+   * - batch_size=100: Number of records to process at a time
    */
   fastify.post<{
     Querystring: {
-      dryRun?: string;
-      batchSize?: string;
+      dry_run?: string;
+      batch_size?: string;
     };
   }>('/rotate-key', {
     preHandler: [requireAdminSecret],
   }, async (request, reply) => {
-    const dryRun = request.query.dryRun === 'true';
-    const batchSize = request.query.batchSize
-      ? parseInt(request.query.batchSize, 10)
+    const dryRun = request.query.dry_run === 'true';
+    const batchSize = request.query.batch_size
+      ? parseInt(request.query.batch_size, 10)
       : 100;
 
     request.log.info({ dryRun, batchSize }, 'Starting key rotation');
@@ -46,11 +48,11 @@ export async function adminRoutes(fastify: FastifyInstance) {
       request.log.info({ result }, 'Key rotation completed successfully');
     }
 
-    return reply.send({
+    return sendData(reply, {
       success: totalFailed === 0,
       dryRun,
       ...result,
-    });
+    }, { requestId: request.id });
   });
 
   // ============================================
@@ -63,7 +65,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/stats', {
     preHandler: [authenticateGitHub, requireAdmin],
-  }, async (_request, reply) => {
+  }, async (request, reply) => {
     const [userCount] = await db.select({ count: count() }).from(users);
     const [vaultCount] = await db.select({ count: count() }).from(vaults);
     const [secretCount] = await db.select({ count: count() }).from(secrets);
@@ -74,12 +76,12 @@ export async function adminRoutes(fastify: FastifyInstance) {
       .from(syncLogs)
       .where(gt(syncLogs.createdAt, twentyFourHoursAgo));
 
-    return reply.send({
+    return sendData(reply, {
       totalUsers: Number(userCount.count),
       totalVaults: Number(vaultCount.count),
       totalSecrets: Number(secretCount.count),
       syncsLast24h: Number(syncCount.count),
-    });
+    }, { requestId: request.id });
   });
 
   /**
@@ -91,8 +93,11 @@ export async function adminRoutes(fastify: FastifyInstance) {
   }>('/users', {
     preHandler: [authenticateGitHub, requireAdmin],
   }, async (request, reply) => {
-    const limit = Math.min(parseInt(request.query.limit || '50', 10), 100);
-    const offset = parseInt(request.query.offset || '0', 10);
+    const pagination = parsePagination(request.query);
+
+    // Get total count
+    const [totalResult] = await db.select({ count: count() }).from(users);
+    const total = Number(totalResult.count);
 
     const userList = await db
       .select({
@@ -107,8 +112,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
       })
       .from(users)
       .orderBy(desc(users.createdAt))
-      .limit(limit)
-      .offset(offset);
+      .limit(pagination.limit)
+      .offset(pagination.offset);
 
     // Get vault counts for each user
     const usersWithVaultCount = await Promise.all(
@@ -124,7 +129,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
       })
     );
 
-    return reply.send({ users: usersWithVaultCount });
+    const meta = buildPaginationMeta(pagination, total, usersWithVaultCount.length);
+    return sendPaginatedData(reply, usersWithVaultCount, meta, { requestId: request.id });
   });
 
   /**
@@ -136,8 +142,11 @@ export async function adminRoutes(fastify: FastifyInstance) {
   }>('/vaults', {
     preHandler: [authenticateGitHub, requireAdmin],
   }, async (request, reply) => {
-    const limit = Math.min(parseInt(request.query.limit || '50', 10), 100);
-    const offset = parseInt(request.query.offset || '0', 10);
+    const pagination = parsePagination(request.query);
+
+    // Get total count
+    const [totalResult] = await db.select({ count: count() }).from(vaults);
+    const total = Number(totalResult.count);
 
     const vaultList = await db
       .select({
@@ -150,8 +159,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
       })
       .from(vaults)
       .orderBy(desc(vaults.createdAt))
-      .limit(limit)
-      .offset(offset);
+      .limit(pagination.limit)
+      .offset(pagination.offset);
 
     // Get additional details for each vault
     const vaultsWithDetails = await Promise.all(
@@ -194,7 +203,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
       })
     );
 
-    return reply.send({ vaults: vaultsWithDetails });
+    const meta = buildPaginationMeta(pagination, total, vaultsWithDetails.length);
+    return sendPaginatedData(reply, vaultsWithDetails, meta, { requestId: request.id });
   });
 
   /**
@@ -206,8 +216,11 @@ export async function adminRoutes(fastify: FastifyInstance) {
   }>('/events', {
     preHandler: [authenticateGitHub, requireAdmin],
   }, async (request, reply) => {
-    const limit = Math.min(parseInt(request.query.limit || '50', 10), 100);
-    const offset = parseInt(request.query.offset || '0', 10);
+    const pagination = parsePagination(request.query);
+
+    // Get total count
+    const [totalResult] = await db.select({ count: count() }).from(activityLogs);
+    const total = Number(totalResult.count);
 
     const events = await db
       .select({
@@ -222,8 +235,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
       })
       .from(activityLogs)
       .orderBy(desc(activityLogs.createdAt))
-      .limit(limit)
-      .offset(offset);
+      .limit(pagination.limit)
+      .offset(pagination.offset);
 
     // Enrich with vault and user info
     const enrichedEvents = await Promise.all(
@@ -263,7 +276,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
       })
     );
 
-    return reply.send({ events: enrichedEvents });
+    const meta = buildPaginationMeta(pagination, total, enrichedEvents.length);
+    return sendPaginatedData(reply, enrichedEvents, meta, { requestId: request.id });
   });
 
   /**
@@ -325,6 +339,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
       })
     );
 
-    return reply.send({ errors: enrichedErrors });
+    return sendData(reply, { errors: enrichedErrors }, { requestId: request.id });
   });
 }

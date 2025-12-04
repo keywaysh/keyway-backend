@@ -57,43 +57,17 @@ export async function authenticateGitHub(
   const tokenPreview = token.substring(0, 20) + '...' + token.substring(token.length - 10);
   request.log.info({ tokenPreview, tokenLength: token.length }, 'Auth middleware: received token');
 
-  // Try to verify as Keyway JWT token first
+  // Step 1: Try to verify as Keyway JWT token
+  let payload;
   try {
-    const payload = verifyKeywayToken(token);
+    payload = verifyKeywayToken(token);
     request.log.info({ userId: payload.userId, username: payload.username }, 'Auth middleware: JWT verified successfully');
-
-    // Get user from database using userId from JWT
-    const user = await db.query.users.findFirst({
-      where: eq(users.id, payload.userId),
-    });
-
-    if (!user) {
-      throw new UnauthorizedError('User not found');
-    }
-
-    // Attach to request for use in route handlers
-    // Decrypt the GitHub access token stored in DB for API calls
-    request.accessToken = await decryptAccessToken({
-      encryptedAccessToken: user.encryptedAccessToken,
-      accessTokenIv: user.accessTokenIv,
-      accessTokenAuthTag: user.accessTokenAuthTag,
-      tokenEncryptionVersion: user.tokenEncryptionVersion ?? 1,
-    });
-    request.githubUser = {
-      githubId: user.githubId,
-      username: user.username,
-      email: user.email,
-      avatarUrl: user.avatarUrl,
-    };
-
-    return;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+  } catch (jwtError) {
+    const errorMessage = jwtError instanceof Error ? jwtError.message : 'Unknown error';
     request.log.warn({ error: errorMessage, tokenPreview }, 'Auth middleware: JWT verification failed');
 
     // If not a valid JWT, try as GitHub access token
-    if (error instanceof Error && error.message.includes('Token')) {
-      // Token is invalid JWT, try as GitHub token
+    if (jwtError instanceof Error && jwtError.message.includes('Token')) {
       request.log.info({ tokenPreview }, 'Auth middleware: trying as GitHub token');
       try {
         const githubUser = await getUserFromToken(token);
@@ -106,17 +80,48 @@ export async function authenticateGitHub(
       } catch (githubError) {
         const ghErrorMsg = githubError instanceof Error ? githubError.message : 'Unknown error';
         request.log.warn({ error: ghErrorMsg }, 'Auth middleware: GitHub token also invalid');
-        // Clear invalid cookie and return 401
         reply.clearCookie('keyway_session', { path: '/' });
         throw new UnauthorizedError('Invalid access token');
       }
     }
 
-    // Any other JWT error (expired, malformed, wrong secret) - clear cookie and return 401
+    // JWT error (expired, malformed, wrong secret)
     request.log.warn({ error: errorMessage }, 'Auth middleware: JWT error, clearing cookie');
     reply.clearCookie('keyway_session', { path: '/' });
     throw new UnauthorizedError('Invalid or expired token');
   }
+
+  // Step 2: Get user from database
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, payload.userId),
+  });
+
+  if (!user) {
+    request.log.warn({ userId: payload.userId }, 'Auth middleware: User not found in DB');
+    throw new UnauthorizedError('User not found');
+  }
+
+  // Step 3: Decrypt the GitHub access token stored in DB
+  try {
+    request.accessToken = await decryptAccessToken({
+      encryptedAccessToken: user.encryptedAccessToken,
+      accessTokenIv: user.accessTokenIv,
+      accessTokenAuthTag: user.accessTokenAuthTag,
+      tokenEncryptionVersion: user.tokenEncryptionVersion ?? 1,
+    });
+    request.log.info({ username: user.username }, 'Auth middleware: GitHub token decrypted successfully');
+  } catch (decryptError) {
+    const errorMessage = decryptError instanceof Error ? decryptError.message : 'Unknown error';
+    request.log.error({ error: errorMessage, userId: user.id }, 'Auth middleware: Failed to decrypt GitHub token');
+    throw new UnauthorizedError('Failed to decrypt stored credentials. Please re-authenticate.');
+  }
+
+  request.githubUser = {
+    githubId: user.githubId,
+    username: user.username,
+    email: user.email,
+    avatarUrl: user.avatarUrl,
+  };
 }
 
 /**

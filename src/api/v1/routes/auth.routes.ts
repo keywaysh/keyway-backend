@@ -424,6 +424,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       verificationUriComplete,
       expiresIn: DEVICE_FLOW_CONFIG.EXPIRES_IN,
       interval: DEVICE_FLOW_CONFIG.POLL_INTERVAL,
+      githubAppInstallUrl: config.githubApp.installUrl,
     };
   });
 

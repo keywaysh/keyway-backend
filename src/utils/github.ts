@@ -414,6 +414,14 @@ export async function getRepoInfo(
     });
 
     if (!response.ok) {
+      const errorBody = await response.text();
+      console.error('[getRepoInfo] GitHub API error:', {
+        status: response.status,
+        statusText: response.statusText,
+        repoFullName,
+        tokenPrefix: accessToken?.substring(0, 10),
+        errorBody: errorBody.substring(0, 500),
+      });
       return null;
     }
 

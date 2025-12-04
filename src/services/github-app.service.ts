@@ -42,13 +42,6 @@ export function generateAppJWT(): string {
     iss: config.githubApp.appId,
   };
 
-  // Debug: log key info
-  const privateKey = config.githubApp.privateKey;
-  console.log('[JWT DEBUG] App ID:', config.githubApp.appId);
-  console.log('[JWT DEBUG] Private key starts with:', privateKey.substring(0, 40));
-  console.log('[JWT DEBUG] Private key ends with:', privateKey.substring(privateKey.length - 40));
-  console.log('[JWT DEBUG] Private key length:', privateKey.length);
-
   // Encode header and payload
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
@@ -57,7 +50,7 @@ export function generateAppJWT(): string {
   const signatureInput = `${encodedHeader}.${encodedPayload}`;
   const sign = crypto.createSign('RSA-SHA256');
   sign.update(signatureInput);
-  const signature = sign.sign(privateKey);
+  const signature = sign.sign(config.githubApp.privateKey);
   const encodedSignature = base64UrlEncode(signature);
 
   return `${encodedHeader}.${encodedPayload}.${encodedSignature}`;

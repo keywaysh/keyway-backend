@@ -262,13 +262,22 @@ const start = async () => {
       host: config.server.host,
     });
 
-    fastify.log.info(`
+    fastify.log.info({
+      host: config.server.host,
+      port: config.server.port,
+      env: config.server.nodeEnv,
+      frontendUrl: config.app.frontendUrl,
+      githubAppName: config.githubApp.name,
+      githubAppInstallUrl: config.githubApp.installUrl,
+      githubClientId: config.github.clientId,
+    }, `
 ╔═══════════════════════════════════════╗
 ║                                       ║
 ║   🔐 Keyway API Server                ║
 ║                                       ║
 ║   Server running on: ${config.server.host}:${config.server.port}     ║
 ║   Environment: ${config.server.nodeEnv}            ║
+║   GitHub App: ${config.githubApp.name}                ║
 ║                                       ║
 ╚═══════════════════════════════════════╝
     `);

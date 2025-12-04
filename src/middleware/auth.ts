@@ -53,9 +53,14 @@ export async function authenticateGitHub(
     throw new UnauthorizedError('Authentication required');
   }
 
+  // Log token info for debugging
+  const tokenPreview = token.substring(0, 20) + '...' + token.substring(token.length - 10);
+  request.log.info({ tokenPreview, tokenLength: token.length }, 'Auth middleware: received token');
+
   // Try to verify as Keyway JWT token first
   try {
     const payload = verifyKeywayToken(token);
+    request.log.info({ userId: payload.userId, username: payload.username }, 'Auth middleware: JWT verified successfully');
 
     // Get user from database using userId from JWT
     const user = await db.query.users.findFirst({
@@ -83,17 +88,24 @@ export async function authenticateGitHub(
 
     return;
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    request.log.warn({ error: errorMessage, tokenPreview }, 'Auth middleware: JWT verification failed');
+
     // If not a valid JWT, try as GitHub access token
     if (error instanceof Error && error.message.includes('Token')) {
       // Token is invalid JWT, try as GitHub token
+      request.log.info({ tokenPreview }, 'Auth middleware: trying as GitHub token');
       try {
         const githubUser = await getUserFromToken(token);
+        request.log.info({ githubId: githubUser.githubId, username: githubUser.username }, 'Auth middleware: GitHub token valid');
 
         // Attach to request for use in route handlers
         request.accessToken = token;
         request.githubUser = githubUser;
         return;
       } catch (githubError) {
+        const ghErrorMsg = githubError instanceof Error ? githubError.message : 'Unknown error';
+        request.log.warn({ error: ghErrorMsg }, 'Auth middleware: GitHub token also invalid');
         // Clear invalid cookie and return 401
         reply.clearCookie('keyway_session', { path: '/' });
         throw new UnauthorizedError('Invalid access token');
@@ -101,6 +113,7 @@ export async function authenticateGitHub(
     }
 
     // Any other JWT error (expired, malformed, wrong secret) - clear cookie and return 401
+    request.log.warn({ error: errorMessage }, 'Auth middleware: JWT error, clearing cookie');
     reply.clearCookie('keyway_session', { path: '/' });
     throw new UnauthorizedError('Invalid or expired token');
   }

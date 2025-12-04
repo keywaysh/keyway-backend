@@ -35,7 +35,7 @@ const envSchema = z.object({
   GITHUB_APP_CLIENT_SECRET: z.string().min(1, 'GITHUB_APP_CLIENT_SECRET is required'),
   GITHUB_APP_PRIVATE_KEY: z.string().min(1, 'GITHUB_APP_PRIVATE_KEY is required'), // Base64-encoded PEM key
   GITHUB_APP_WEBHOOK_SECRET: z.string().optional(),
-  GITHUB_APP_NAME: z.string().default('keyway'),
+  GITHUB_APP_NAME: z.string().default('keyway-app'),
 
   // Analytics
   POSTHOG_API_KEY: z.string().optional(),

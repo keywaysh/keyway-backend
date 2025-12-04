@@ -27,7 +27,7 @@ import {
   canWriteToVault,
   getPrivateVaultAccess,
 } from '../../../services';
-import { hasRepoAccess, getRepoInfo, getRepoCollaborators, getUserRole } from '../../../utils/github';
+import { hasRepoAccess, getRepoInfo, getRepoCollaboratorsWithApp, getUserRoleWithApp } from '../../../utils/github';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
 import { repoFullNameSchema, DEFAULT_ENVIRONMENTS } from '../../../types';
 import { getSecurityAlerts } from '../../../services/security.service';
@@ -381,7 +381,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     }
 
     // Check GitHub write permission (write, maintain, or admin)
-    const role = await getUserRole(accessToken, vault.repoFullName, githubUser.username);
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
     const canWriteGitHub = role && ['write', 'maintain', 'admin'].includes(role);
     if (!canWriteGitHub) {
       throw new ForbiddenError('You need write access to this repository to create or update secrets');
@@ -467,7 +467,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     }
 
     // Check GitHub write permission (write, maintain, or admin)
-    const role = await getUserRole(accessToken, vault.repoFullName, githubUser.username);
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
     const canWriteGitHub = role && ['write', 'maintain', 'admin'].includes(role);
     if (!canWriteGitHub) {
       throw new ForbiddenError('You need write access to this repository to update secrets');
@@ -530,7 +530,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     }
 
     // Check GitHub write permission (write, maintain, or admin)
-    const role = await getUserRole(accessToken, vault.repoFullName, githubUser.username);
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
     const canWriteGitHub = role && ['write', 'maintain', 'admin'].includes(role);
     if (!canWriteGitHub) {
       throw new ForbiddenError('You need write access to this repository to delete secrets');
@@ -1005,15 +1005,17 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   });
 
   // ============================================
-  // Contributors routes
+  // Collaborators routes
   // ============================================
 
   /**
-   * GET /:owner/:repo/contributors
+   * GET /:owner/:repo/collaborators
    * Get all collaborators for a repository with their permission levels
+   * Includes both GitHub permissions and derived Keyway permissions
+   * Uses GitHub App token when available for enhanced access
    * Requires admin access to the repository
    */
-  fastify.get('/:owner/:repo/contributors', {
+  fastify.get('/:owner/:repo/collaborators', {
     preHandler: [authenticateGitHub, requireAdminAccess],
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string };
@@ -1027,13 +1029,58 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       throw new NotFoundError('Vault not found');
     }
 
-    // Fetch collaborators from GitHub API
-    const contributors = await getRepoCollaborators(accessToken, owner, repo);
+    // Fetch collaborators from GitHub API using GitHub App installation token
+    const collaborators = await getRepoCollaboratorsWithApp(owner, repo);
+
+    // Enrich with Keyway permissions based on GitHub role
+    const enrichedCollaborators = collaborators.map((collab) => {
+      // Derive Keyway permissions from GitHub role
+      // These match the permission model in utils/permissions.ts
+      const canRead = ['read', 'triage', 'write', 'maintain', 'admin'].includes(collab.permission);
+      const canWrite = ['write', 'maintain', 'admin'].includes(collab.permission);
+      const canManage = collab.permission === 'admin';
+
+      return {
+        login: collab.login,
+        avatarUrl: collab.avatarUrl,
+        htmlUrl: collab.htmlUrl,
+        githubPermission: collab.permission,
+        keywayPermissions: {
+          canRead,
+          canWrite,
+          canManage,
+        },
+        type: collab.login.endsWith('[bot]') ? 'bot' : 'user',
+      };
+    });
+
+    return sendData(reply, {
+      repoFullName,
+      provider: 'github',
+      collaborators: enrichedCollaborators,
+    }, { requestId: request.id });
+  });
+
+  // Keep old endpoint for backwards compatibility (deprecated)
+  fastify.get('/:owner/:repo/contributors', {
+    preHandler: [authenticateGitHub, requireAdminAccess],
+  }, async (request, reply) => {
+    const params = request.params as { owner: string; repo: string };
+    const { owner, repo } = params;
+    const repoFullName = `${owner}/${repo}`;
+    const accessToken = request.accessToken!;
+
+    const vault = await getVaultByRepoInternal(repoFullName);
+    if (!vault) {
+      throw new NotFoundError('Vault not found');
+    }
+
+    const collaborators = await getRepoCollaboratorsWithApp(owner, repo);
 
     return sendData(reply, {
       repoId: repoFullName,
       provider: 'github',
-      contributors,
+      contributors: collaborators,
     }, { requestId: request.id });
   });
 }

@@ -273,11 +273,11 @@ describe('Auth Routes', () => {
     it('should show confirmation message when code is pre-filled', async () => {
       const response = await app.inject({
         method: 'GET',
-        url: '/v1/auth/device/verify?user_code=ABCD-1234',
+        url: '/v1/auth/device/verify?user_code=ABCDE-12345',
       });
 
       expect(response.body).toContain('Code detected');
-      expect(response.body).toContain('ABCD-1234');
+      expect(response.body).toContain('ABCDE-12345');
     });
   });
 

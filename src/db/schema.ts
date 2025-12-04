@@ -85,6 +85,19 @@ export const billingStatusEnum = pgEnum('billing_status', [
   'trialing',
 ]);
 
+// GitHub App installation account types
+export const installationAccountTypeEnum = pgEnum('installation_account_type', [
+  'user',
+  'organization',
+]);
+
+// GitHub App installation status
+export const installationStatusEnum = pgEnum('installation_status', [
+  'active',
+  'suspended',
+  'deleted',
+]);
+
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   githubId: integer('github_id').notNull().unique(),
@@ -112,6 +125,9 @@ export const vaults = pgTable('vaults', {
   isPrivate: boolean('is_private').notNull().default(false),
   // List of environments for this vault (dynamic, user-managed)
   environments: text('environments').array().notNull().default([...DEFAULT_ENVIRONMENTS]),
+  // Link to GitHub App installation (for repos using GitHub App access)
+  // Note: FK constraint added via migration, references github_app_installations.id
+  githubAppInstallationId: uuid('github_app_installation_id'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
@@ -272,6 +288,56 @@ export const stripeWebhookEvents = pgTable('stripe_webhook_events', {
   processedAt: timestamp('processed_at').notNull().defaultNow(),
 });
 
+// GitHub App installations
+export const githubAppInstallations = pgTable('github_app_installations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // GitHub App installation identifiers
+  installationId: integer('installation_id').notNull().unique(),
+  accountId: integer('account_id').notNull(),
+  accountLogin: text('account_login').notNull(),
+  accountType: installationAccountTypeEnum('account_type').notNull(),
+  // Status and permissions
+  status: installationStatusEnum('status').notNull().default('active'),
+  permissions: jsonb('permissions').notNull().default({}),
+  // Repository selection ('all' or 'selected')
+  repositorySelection: text('repository_selection').notNull().default('selected'),
+  // Tracking who installed it (links to Keyway user if known)
+  installedByUserId: uuid('installed_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  // Timestamps
+  installedAt: timestamp('installed_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  suspendedAt: timestamp('suspended_at'),
+  deletedAt: timestamp('deleted_at'),
+});
+
+// GitHub App installation repos (junction table for 'selected' repository_selection)
+export const githubAppInstallationRepos = pgTable('github_app_installation_repos', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // Links to installation (uses internal id, not GitHub's installation_id)
+  installationId: uuid('installation_id').notNull().references(() => githubAppInstallations.id, { onDelete: 'cascade' }),
+  // GitHub repo identifiers
+  repoId: integer('repo_id').notNull(),
+  repoFullName: text('repo_full_name').notNull(),
+  repoPrivate: boolean('repo_private').notNull().default(false),
+  // When the repo was added to this installation
+  addedAt: timestamp('added_at').notNull().defaultNow(),
+});
+
+// GitHub App installation token cache (1h TTL)
+export const githubAppInstallationTokens = pgTable('github_app_installation_tokens', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // Links to installation (uses internal id)
+  installationId: uuid('installation_id').notNull().references(() => githubAppInstallations.id, { onDelete: 'cascade' }).unique(),
+  // Encrypted token (same pattern as user tokens)
+  encryptedToken: text('encrypted_token').notNull(),
+  tokenIv: text('token_iv').notNull(),
+  tokenAuthTag: text('token_auth_tag').notNull(),
+  tokenEncryptionVersion: integer('token_encryption_version').notNull().default(1),
+  // Token expiration (GitHub installation tokens expire in 1 hour)
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
 // Sync logs (audit trail for each sync operation)
 export const syncLogs = pgTable('sync_logs', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -300,6 +366,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   usageMetrics: one(usageMetrics),
   providerConnections: many(providerConnections),
   subscription: one(subscriptions),
+  githubAppInstallations: many(githubAppInstallations),
 }));
 
 export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
@@ -320,6 +387,10 @@ export const vaultsRelations = relations(vaults, ({ one, many }) => ({
   owner: one(users, {
     fields: [vaults.ownerId],
     references: [users.id],
+  }),
+  githubAppInstallation: one(githubAppInstallations, {
+    fields: [vaults.githubAppInstallationId],
+    references: [githubAppInstallations.id],
   }),
   secrets: many(secrets),
   environmentPermissions: many(environmentPermissions),
@@ -431,6 +502,31 @@ export const syncLogsRelations = relations(syncLogs, ({ one }) => ({
   }),
 }));
 
+// GitHub App relations
+export const githubAppInstallationsRelations = relations(githubAppInstallations, ({ one, many }) => ({
+  installedByUser: one(users, {
+    fields: [githubAppInstallations.installedByUserId],
+    references: [users.id],
+  }),
+  repos: many(githubAppInstallationRepos),
+  tokenCache: one(githubAppInstallationTokens),
+  vaults: many(vaults),
+}));
+
+export const githubAppInstallationReposRelations = relations(githubAppInstallationRepos, ({ one }) => ({
+  installation: one(githubAppInstallations, {
+    fields: [githubAppInstallationRepos.installationId],
+    references: [githubAppInstallations.id],
+  }),
+}));
+
+export const githubAppInstallationTokensRelations = relations(githubAppInstallationTokens, ({ one }) => ({
+  installation: one(githubAppInstallations, {
+    fields: [githubAppInstallationTokens.installationId],
+    references: [githubAppInstallations.id],
+  }),
+}));
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Vault = typeof vaults.$inferSelect;
@@ -470,3 +566,11 @@ export type Subscription = typeof subscriptions.$inferSelect;
 export type NewSubscription = typeof subscriptions.$inferInsert;
 export type StripeWebhookEvent = typeof stripeWebhookEvents.$inferSelect;
 export type NewStripeWebhookEvent = typeof stripeWebhookEvents.$inferInsert;
+export type GithubAppInstallation = typeof githubAppInstallations.$inferSelect;
+export type NewGithubAppInstallation = typeof githubAppInstallations.$inferInsert;
+export type GithubAppInstallationRepo = typeof githubAppInstallationRepos.$inferSelect;
+export type NewGithubAppInstallationRepo = typeof githubAppInstallationRepos.$inferInsert;
+export type GithubAppInstallationToken = typeof githubAppInstallationTokens.$inferSelect;
+export type NewGithubAppInstallationToken = typeof githubAppInstallationTokens.$inferInsert;
+export type InstallationAccountType = typeof installationAccountTypeEnum.enumValues[number];
+export type InstallationStatus = typeof installationStatusEnum.enumValues[number];

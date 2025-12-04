@@ -23,7 +23,7 @@ import { config } from '../../../config';
 import { db, vaults, users } from '../../../db';
 import { eq } from 'drizzle-orm';
 import { NotFoundError, ForbiddenError, BadRequestError, PlanLimitError } from '../../../lib';
-import { hasRepoAccess, hasAdminAccess, getUserRole } from '../../../utils/github';
+import { hasRepoAccess, hasAdminAccess, getUserRoleWithApp } from '../../../utils/github';
 import { providerConnections } from '../../../db/schema';
 import { and } from 'drizzle-orm';
 import { sendData, sendNoContent } from '../../../lib/response';
@@ -98,8 +98,8 @@ async function verifyVaultWriteAccess(accessToken: string, owner: string, repo: 
   const vault = await verifyVaultAccess(accessToken, owner, repo);
   const repoFullName = `${owner}/${repo}`;
 
-  // Get user's role to check write permission
-  const role = await getUserRole(accessToken, repoFullName, username);
+  // Get user's role to check write permission (using GitHub App)
+  const role = await getUserRoleWithApp(repoFullName, username);
 
   // write, maintain, admin can write
   const canWrite = role && ['write', 'maintain', 'admin'].includes(role);

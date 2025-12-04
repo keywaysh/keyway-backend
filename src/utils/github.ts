@@ -1,9 +1,43 @@
 import { z } from 'zod';
 import { config } from '../config';
-import { UnauthorizedError } from '../lib';
+import { ForbiddenError, UnauthorizedError } from '../lib';
 import type { CollaboratorRole } from '../db/schema';
+import {
+  findInstallationForRepo,
+  getInstallationToken,
+} from '../services/github-app.service';
 
 const GITHUB_API_BASE = config.github.apiBaseUrl;
+
+/**
+ * Token source type - always 'app' since we only use GitHub App tokens
+ */
+export type TokenSource = 'app';
+
+/**
+ * Get the GitHub App installation token for accessing a repository.
+ * GitHub App must be installed for the repository.
+ *
+ * @param repoOwner - Repository owner
+ * @param repoName - Repository name
+ * @returns Installation token
+ * @throws ForbiddenError if GitHub App is not installed for this repo
+ */
+export async function getTokenForRepo(
+  repoOwner: string,
+  repoName: string
+): Promise<string> {
+  const installation = await findInstallationForRepo(repoOwner, repoName);
+
+  if (!installation) {
+    throw new ForbiddenError(
+      `GitHub App not installed for ${repoOwner}/${repoName}. ` +
+        `Please install the Keyway GitHub App: ${config.githubApp.installUrl}`
+    );
+  }
+
+  return getInstallationToken(installation.installationId);
+}
 
 interface GitHubUser {
   id: number;
@@ -264,6 +298,12 @@ export async function getUserRole(
       return 'admin';
     }
 
+    // Also check if the repo owner (from URL) matches the username
+    // This handles the case where installation tokens don't return full owner info
+    if (owner === username) {
+      return 'admin';
+    }
+
     // If they have admin permission via the basic permissions check
     if (repoData.permissions?.admin === true) {
       return 'admin';
@@ -440,4 +480,71 @@ export async function getRepoCollaborators(
   }
 
   return collaborators;
+}
+
+// ============================================================================
+// GitHub App wrappers
+// These functions use GitHub App installation tokens
+// ============================================================================
+
+/**
+ * Get repository info using GitHub App installation token
+ * @throws ForbiddenError if GitHub App is not installed
+ */
+export async function getRepoInfoWithApp(
+  repoFullName: string
+): Promise<{ isPrivate: boolean; isOrganization: boolean } | null> {
+  const [owner, repo] = repoFullName.split('/');
+  const token = await getTokenForRepo(owner, repo);
+
+  return getRepoInfo(token, repoFullName);
+}
+
+/**
+ * Get all collaborators using GitHub App installation token
+ * @throws ForbiddenError if GitHub App is not installed
+ */
+export async function getRepoCollaboratorsWithApp(
+  owner: string,
+  repo: string
+): Promise<RepoCollaborator[]> {
+  const token = await getTokenForRepo(owner, repo);
+  return getRepoCollaborators(token, owner, repo);
+}
+
+/**
+ * Check admin access using GitHub App installation token
+ * @throws ForbiddenError if GitHub App is not installed
+ */
+export async function hasAdminAccessWithApp(
+  repoFullName: string
+): Promise<boolean> {
+  const [owner, repo] = repoFullName.split('/');
+  const token = await getTokenForRepo(owner, repo);
+  return hasAdminAccess(token, repoFullName);
+}
+
+/**
+ * Get repo access and permission using GitHub App installation token
+ * @throws ForbiddenError if GitHub App is not installed
+ */
+export async function getRepoAccessAndPermissionWithApp(
+  repoFullName: string
+): Promise<{ hasAccess: boolean; permission: CollaboratorRole | null }> {
+  const [owner, repo] = repoFullName.split('/');
+  const token = await getTokenForRepo(owner, repo);
+  return getRepoAccessAndPermission(token, repoFullName);
+}
+
+/**
+ * Get user role using GitHub App installation token
+ * @throws ForbiddenError if GitHub App is not installed
+ */
+export async function getUserRoleWithApp(
+  repoFullName: string,
+  username: string
+): Promise<CollaboratorRole | null> {
+  const [owner, repo] = repoFullName.split('/');
+  const token = await getTokenForRepo(owner, repo);
+  return getUserRole(token, repoFullName, username);
 }

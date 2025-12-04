@@ -13,6 +13,7 @@ import { encryptAccessToken } from '../../../utils/tokenEncryption';
 import { signState, verifyState } from '../../../utils/state';
 import { sendWelcomeEmail } from '../../../utils/email';
 import { sendData, sendNoContent } from '../../../lib/response';
+import { handleInstallationCreated } from '../../../services/github-app.service';
 
 // Schemas
 const DeviceFlowStartSchema = z.object({
@@ -80,13 +81,113 @@ export async function authRoutes(fastify: FastifyInstance) {
   /**
    * GET /callback
    * Unified GitHub OAuth callback for both web and device flows
+   * Also handles GitHub App installation callbacks (setup_action=install)
    */
   fastify.get('/callback', async (request, reply) => {
-    const query = request.query as { code?: string; state?: string; error?: string };
+    const query = request.query as {
+      code?: string;
+      state?: string;
+      error?: string;
+      installation_id?: string;
+      setup_action?: string;
+    };
 
     if (query.error) {
       fastify.log.warn({ error: query.error }, 'GitHub OAuth error');
       return reply.type('text/html').send(renderErrorPage('Authorization Denied', 'You denied the authorization request. You can close this window.'));
+    }
+
+    // Handle GitHub App installation callback (no state, has installation_id)
+    // This happens when user installs the app directly from GitHub
+    if (query.setup_action === 'install' && query.installation_id) {
+      fastify.log.info({ installationId: query.installation_id }, 'GitHub App installation callback');
+
+      // If there's a code, exchange it for a user token and process the installation
+      if (query.code) {
+        try {
+          const accessToken = await exchangeCodeForToken(query.code);
+          const githubUser = await getUserFromToken(accessToken);
+          const { user, isNewUser } = await upsertUser(githubUser, accessToken);
+
+          // Fetch installation details from GitHub API and store in DB
+          const installationId = parseInt(query.installation_id, 10);
+          await handleInstallationCreated(installationId, user.id);
+
+          trackEvent(user.id, AnalyticsEvents.AUTH_SUCCESS, {
+            username: githubUser.username,
+            method: 'github_app_install',
+            isNewUser,
+            installationId,
+          });
+
+          if (isNewUser) {
+            trackEvent(user.id, AnalyticsEvents.USER_CREATED, {
+              username: githubUser.username,
+              signupSource: 'github_app_install',
+              method: 'github_app_install',
+            });
+
+            identifyUser(user.id, {
+              username: user.username,
+              plan: user.plan,
+              signupSource: 'github_app_install',
+              signupTimestamp: user.createdAt.toISOString(),
+            });
+
+            if (user.email) {
+              sendWelcomeEmail({ to: user.email, username: user.username });
+            }
+          }
+
+          // Set session cookies
+          const keywayToken = generateKeywayToken({
+            userId: user.id,
+            githubId: user.githubId,
+            username: user.username,
+          });
+
+          const isProduction = config.server.isProduction;
+          const maxAge = 30 * 24 * 60 * 60;
+
+          const host = (request.headers.host || '').split(':')[0];
+          const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
+          let domain: string | undefined;
+
+          if (isProduction && !isLocalhost) {
+            const parts = host.split('.');
+            if (parts.length >= 2) {
+              domain = `.${parts.slice(-2).join('.')}`;
+            }
+          }
+
+          reply.setCookie('keyway_session', keywayToken, {
+            path: '/',
+            httpOnly: true,
+            secure: isProduction,
+            sameSite: 'lax',
+            maxAge,
+            domain,
+          });
+
+          reply.setCookie('keyway_logged_in', 'true', {
+            path: '/',
+            httpOnly: false,
+            secure: isProduction,
+            sameSite: 'lax',
+            maxAge,
+            domain,
+          });
+
+          // Redirect to dashboard
+          return reply.redirect(`${config.app.frontendUrl}${config.app.dashboardPath}`);
+        } catch (error) {
+          fastify.log.error({ err: error, installationId: query.installation_id }, 'GitHub App installation error');
+          return reply.type('text/html').send(renderErrorPage('Installation Error', 'An error occurred while processing the GitHub App installation. Please try again.'));
+        }
+      }
+
+      // No code - just installation ID, show success page
+      return reply.type('text/html').send(renderInstallSuccessPage(query.installation_id));
     }
 
     if (!query.code || !query.state) {
@@ -176,7 +277,7 @@ export async function authRoutes(fastify: FastifyInstance) {
 
         // In development with different ports, pass token via URL for frontend to set cookies
         // In production, cookies work because same domain
-        let redirectUrl = (stateData.redirectUri as string | null) || (isProduction ? 'https://keyway.sh/dashboard' : 'http://localhost:3100/dashboard');
+        let redirectUrl = (stateData.redirectUri as string | null) || `${config.app.frontendUrl}${config.app.dashboardPath}`;
 
         // If redirect URL is to a different port (dev mode), pass token via URL param
         const backendHost = request.headers.host || '';
@@ -287,7 +388,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const githubAuthUrl = new URL('https://github.com/login/oauth/authorize');
     githubAuthUrl.searchParams.set('client_id', config.github.clientId);
     githubAuthUrl.searchParams.set('redirect_uri', callbackUri);
-    githubAuthUrl.searchParams.set('scope', 'repo read:user user:email');
+    githubAuthUrl.searchParams.set('scope', 'read:user user:email');
     githubAuthUrl.searchParams.set('state', state);
 
     return reply.redirect(githubAuthUrl.toString());
@@ -414,7 +515,7 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.get('/device/verify', async (request, reply) => {
     const query = request.query as { user_code?: string };
     const userCode = query.user_code || '';
-    const autoSubmit = userCode.length === 9;
+    const autoSubmit = userCode.length === 11; // XXXXX-XXXXX = 11 chars
 
     // Track funnel: page view
     trackEvent('anonymous', AnalyticsEvents.DEVICE_VERIFY_PAGE_VIEW, {
@@ -464,7 +565,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const githubAuthUrl = new URL('https://github.com/login/oauth/authorize');
     githubAuthUrl.searchParams.set('client_id', config.github.clientId);
     githubAuthUrl.searchParams.set('redirect_uri', callbackUri);
-    githubAuthUrl.searchParams.set('scope', 'repo read:user user:email');
+    githubAuthUrl.searchParams.set('scope', 'read:user user:email');
     githubAuthUrl.searchParams.set('state', state);
 
     return reply.redirect(githubAuthUrl.toString());
@@ -622,16 +723,50 @@ function renderVerifyPage(userCode: string, autoSubmit: boolean): string {
     <div class="permissions">
       <h3>🔒 What Keyway will access</h3>
       <ul>
-        <li><span class="yes">✓</span> Check if you have admin/push access to repositories</li>
-        <li><span class="yes">✓</span> Your GitHub username and email</li>
+        <li><span class="yes">✓</span> Your GitHub username and email (for authentication)</li>
         <li><span class="no">✗</span> NEVER reads your repository code</li>
         <li><span class="no">✗</span> NEVER reads issues or pull requests</li>
       </ul>
+      <p style="font-size: 12px; color: #718096; margin-top: 12px;">Repository access requires installing the Keyway GitHub App (separate step)</p>
     </div>
     <form id="verifyForm" action="/v1/auth/device/verify" method="POST">
-      <input type="text" name="user_code" id="userCodeInput" placeholder="XXXX-XXXX" value="${userCode}" pattern="[A-Z0-9]{4}-[A-Z0-9]{4}" maxlength="9" required ${autoSubmit ? 'readonly' : 'autofocus'} />
+      <input type="text" name="user_code" id="userCodeInput" placeholder="XXXXX-XXXXX" value="${userCode}" pattern="[A-Z0-9]{5}-[A-Z0-9]{5}" maxlength="11" required ${autoSubmit ? 'readonly' : 'autofocus'} />
       <button type="submit">${autoSubmit ? 'Continue with GitHub' : 'Continue with GitHub'}</button>
     </form>
+  </div>
+</body>
+</html>`;
+}
+
+function renderInstallSuccessPage(installationId: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keyway - Setup Complete</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .container { background: white; border-radius: 12px; padding: 40px; max-width: 480px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.3); text-align: center; }
+    h1 { font-size: 28px; margin-bottom: 12px; color: #38a169; }
+    p { color: #4a5568; margin-bottom: 16px; line-height: 1.6; }
+    .logo { font-size: 48px; margin-bottom: 20px; }
+    .return-terminal { background: #1a202c; color: #68d391; padding: 16px 24px; border-radius: 8px; margin-top: 24px; font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; font-size: 14px; }
+    .return-terminal .arrow { color: #a0aec0; }
+    .blink { animation: blink 1s infinite; }
+    @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">✅</div>
+    <h1>Setup Complete!</h1>
+    <p>Keyway is now installed and you're logged in.</p>
+    <p style="font-size: 14px; color: #718096;">Return to your terminal — your vault is being created.</p>
+    <div class="return-terminal">
+      <span class="arrow">$</span> keyway init<span class="blink">_</span>
+    </div>
   </div>
 </body>
 </html>`;

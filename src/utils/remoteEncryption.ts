@@ -129,16 +129,18 @@ export class RemoteEncryptionService implements IEncryptionService {
 
     // Security: Only allow insecure gRPC for trusted networks
     // Railway private networking doesn't provide TLS, but traffic is isolated
+    // Docker container names are also trusted (internal Docker network)
     // (CRIT-2 fix: Validate address to prevent accidental exposure)
     const isTrustedNetwork =
       address.startsWith('localhost') ||
       address.startsWith('127.0.0.1') ||
-      address.includes('.railway.internal');
+      address.includes('.railway.internal') ||
+      address.startsWith('crypto:'); // Docker container name for local dev
 
     if (!isTrustedNetwork) {
       throw new Error(
         `Crypto service address "${address}" is not on a trusted network. ` +
-          'Only localhost, 127.0.0.1, and *.railway.internal are allowed without TLS.'
+          'Only localhost, 127.0.0.1, *.railway.internal, and crypto:* (Docker) are allowed without TLS.'
       );
     }
 

@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { UnauthorizedError, ForbiddenError } from '../lib';
-import { getUserFromToken, hasAdminAccess, getUserRole } from '../utils/github';
+import { getUserFromToken, getUserRoleWithApp } from '../utils/github';
 import { verifyKeywayToken } from '../utils/jwt';
 import { decryptAccessToken } from '../utils/tokenEncryption';
 import { db, users, vaults } from '../db';
@@ -108,13 +108,14 @@ export async function authenticateGitHub(
 
 /**
  * Verify user has admin access to a repository
+ * Uses GitHub App installation token to check permissions
  * Requires authenticateGitHub to be called first
  */
 export async function requireAdminAccess(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
-  if (!request.accessToken) {
+  if (!request.accessToken || !request.githubUser) {
     throw new UnauthorizedError('Authentication required');
   }
 
@@ -130,7 +131,9 @@ export async function requireAdminAccess(
     throw new ForbiddenError('Repository name required');
   }
 
-  const isAdmin = await hasAdminAccess(request.accessToken, repoFullName);
+  // Use GitHub App to check user's role on the repo
+  const role = await getUserRoleWithApp(repoFullName, request.githubUser.username);
+  const isAdmin = role === 'admin';
 
   if (!isAdmin) {
     throw new ForbiddenError('Only repository admins can perform this action');
@@ -166,9 +169,8 @@ export function requireEnvironmentAccess(permissionType: PermissionType) {
       throw new ForbiddenError('Environment name required');
     }
 
-    // Get user's role for this repository
-    const userRole = await getUserRole(
-      request.accessToken,
+    // Get user's role for this repository using GitHub App
+    const userRole = await getUserRoleWithApp(
       repoFullName,
       request.githubUser.username
     );

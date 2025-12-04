@@ -29,9 +29,13 @@ const envSchema = z.object({
   // JWT for Keyway tokens
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
 
-  // GitHub OAuth
-  GITHUB_CLIENT_ID: z.string().min(1, 'GITHUB_CLIENT_ID is required'),
-  GITHUB_CLIENT_SECRET: z.string().min(1, 'GITHUB_CLIENT_SECRET is required'),
+  // GitHub App (unified auth + repo access)
+  GITHUB_APP_ID: z.string().min(1, 'GITHUB_APP_ID is required'),
+  GITHUB_APP_CLIENT_ID: z.string().min(1, 'GITHUB_APP_CLIENT_ID is required'),
+  GITHUB_APP_CLIENT_SECRET: z.string().min(1, 'GITHUB_APP_CLIENT_SECRET is required'),
+  GITHUB_APP_PRIVATE_KEY: z.string().min(1, 'GITHUB_APP_PRIVATE_KEY is required'), // Base64-encoded PEM key
+  GITHUB_APP_WEBHOOK_SECRET: z.string().optional(),
+  GITHUB_APP_NAME: z.string().default('keyway'),
 
   // Analytics
   POSTHOG_API_KEY: z.string().optional(),
@@ -63,6 +67,9 @@ const envSchema = z.object({
   STRIPE_PRICE_PRO_YEARLY: z.string().optional(),
   STRIPE_PRICE_TEAM_MONTHLY: z.string().optional(),
   STRIPE_PRICE_TEAM_YEARLY: z.string().optional(),
+
+  // Frontend URLs (for redirects after auth)
+  FRONTEND_URL: z.string().url().optional(),
 });
 
 // Validate environment variables
@@ -88,6 +95,13 @@ export const config = {
     isTest: env.NODE_ENV === 'test',
   },
 
+  app: {
+    // Frontend URL for redirects after authentication
+    // Defaults: https://keyway.sh (prod), https://localhost (dev)
+    frontendUrl: env.FRONTEND_URL || (env.NODE_ENV === 'production' ? 'https://keyway.sh' : 'https://localhost'),
+    dashboardPath: '/dashboard',
+  },
+
   database: {
     url: env.DATABASE_URL,
   },
@@ -102,10 +116,19 @@ export const config = {
     refreshTokenExpiresIn: '90d', // 90 days for refresh tokens
   },
 
+  // GitHub App provides both user authentication (OAuth) and repo access (installation tokens)
   github: {
-    clientId: env.GITHUB_CLIENT_ID,
-    clientSecret: env.GITHUB_CLIENT_SECRET,
+    clientId: env.GITHUB_APP_CLIENT_ID,
+    clientSecret: env.GITHUB_APP_CLIENT_SECRET,
     apiBaseUrl: 'https://api.github.com',
+  },
+
+  githubApp: {
+    appId: env.GITHUB_APP_ID,
+    privateKey: Buffer.from(env.GITHUB_APP_PRIVATE_KEY, 'base64').toString('utf8'),
+    webhookSecret: env.GITHUB_APP_WEBHOOK_SECRET,
+    name: env.GITHUB_APP_NAME,
+    installUrl: `https://github.com/apps/${env.GITHUB_APP_NAME}/installations/new`,
   },
 
   analytics: {

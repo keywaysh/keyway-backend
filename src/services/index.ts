@@ -57,3 +57,18 @@ export {
   handleWebhookEvent,
   getAvailablePrices,
 } from './billing.service';
+
+// GitHub App service
+export {
+  generateAppJWT,
+  getInstallationToken,
+  findInstallationForRepo,
+  checkInstallationStatus,
+  assertRepoAccessViaApp,
+  createInstallation,
+  deleteInstallation,
+  updateInstallationStatus,
+  updateInstallationRepos,
+  getInstallationsForUser,
+  getInstallationByGitHubId,
+} from './github-app.service';

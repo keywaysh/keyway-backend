@@ -1,9 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getRepoCollaborators } from '../src/utils/github';
+import { getRepoCollaborators, getUserRole } from '../src/utils/github';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
+
+// Mock the github-app.service for getUserRoleWithApp tests
+vi.mock('../src/services/github-app.service', () => ({
+  findInstallationForRepo: vi.fn(),
+  getInstallationToken: vi.fn(),
+}));
 
 describe('GitHub Utils', () => {
   beforeEach(() => {
@@ -201,6 +207,202 @@ describe('GitHub Utils', () => {
             Accept: 'application/vnd.github.v3+json',
           }),
         })
+      );
+    });
+  });
+
+  describe('getUserRole', () => {
+    const accessToken = 'test-access-token';
+    const repoFullName = 'testuser/test-repo';
+    const username = 'testuser';
+
+    it('should return admin for repository owner (same as username)', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          owner: { login: 'testuser' },
+          permissions: { admin: true, push: true, pull: true },
+        }),
+      });
+
+      const result = await getUserRole(accessToken, repoFullName, username);
+
+      expect(result).toBe('admin');
+    });
+
+    it('should return admin when repo owner matches URL owner', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          owner: { login: 'someorg' },
+          permissions: { admin: false, push: true, pull: true },
+        }),
+      });
+
+      // When username matches the owner part of repoFullName
+      const result = await getUserRole(accessToken, 'testuser/other-repo', 'testuser');
+
+      expect(result).toBe('admin');
+    });
+
+    it('should return admin when permissions.admin is true', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          owner: { login: 'someorg' },
+          permissions: { admin: true, push: true, pull: true },
+        }),
+      });
+
+      const result = await getUserRole(accessToken, 'someorg/test-repo', 'other-user');
+
+      expect(result).toBe('admin');
+    });
+
+    it('should return write when user has push permission', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            owner: { login: 'someorg' },
+            permissions: { admin: false, push: true, pull: true },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            role_name: 'push',
+            permissions: { push: true, pull: true, admin: false },
+          }),
+        });
+
+      const result = await getUserRole(accessToken, 'someorg/test-repo', 'contributor');
+
+      expect(result).toBe('write');
+    });
+
+    it('should return read when user only has pull permission', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            owner: { login: 'someorg' },
+            permissions: { admin: false, push: false, pull: true },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+        });
+
+      const result = await getUserRole(accessToken, 'someorg/test-repo', 'reader');
+
+      expect(result).toBe('read');
+    });
+
+    it('should return null when user has no access', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+      });
+
+      const result = await getUserRole(accessToken, 'private/repo', 'stranger');
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null on network error', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+
+      const result = await getUserRole(accessToken, repoFullName, username);
+
+      expect(result).toBeNull();
+    });
+
+    it('should handle collaborator API returning detailed role', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            owner: { login: 'someorg' },
+            permissions: { admin: false, push: true, pull: true },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            role_name: 'maintain',
+            permissions: { push: true, pull: true, admin: false },
+          }),
+        });
+
+      const result = await getUserRole(accessToken, 'someorg/test-repo', 'maintainer');
+
+      expect(result).toBe('maintain');
+    });
+
+    it('should handle triage role correctly', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            owner: { login: 'someorg' },
+            permissions: { admin: false, push: false, pull: true, triage: true },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            role_name: 'triage',
+            permissions: { push: false, pull: true, admin: false },
+          }),
+        });
+
+      const result = await getUserRole(accessToken, 'someorg/test-repo', 'triager');
+
+      expect(result).toBe('triage');
+    });
+  });
+
+  describe('getUserRoleWithApp', () => {
+    it('should use GitHub App installation token', async () => {
+      const { findInstallationForRepo, getInstallationToken } = await import(
+        '../src/services/github-app.service'
+      );
+
+      (findInstallationForRepo as any).mockResolvedValue({
+        id: 'inst-123',
+        installationId: 12345678,
+        accountLogin: 'testuser',
+        status: 'active',
+      });
+      (getInstallationToken as any).mockResolvedValue('ghs_installation_token');
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          owner: { login: 'testuser' },
+          permissions: { admin: true, push: true, pull: true },
+        }),
+      });
+
+      const { getUserRoleWithApp } = await import('../src/utils/github');
+
+      const result = await getUserRoleWithApp('testuser/test-repo', 'testuser');
+
+      expect(result).toBe('admin');
+      expect(getInstallationToken).toHaveBeenCalledWith(12345678);
+    });
+
+    it('should throw ForbiddenError when GitHub App is not installed', async () => {
+      const { findInstallationForRepo } = await import('../src/services/github-app.service');
+
+      (findInstallationForRepo as any).mockResolvedValue(null);
+
+      const { getUserRoleWithApp } = await import('../src/utils/github');
+
+      await expect(getUserRoleWithApp('unknown/repo', 'user')).rejects.toThrow(
+        'GitHub App not installed'
       );
     });
   });

@@ -1,10 +1,8 @@
 {
-  "id": "8b54efdf-4af0-4043-8a7b-b6f5f3ff9c8a",
-  "prevId": "00000000-0000-0000-0000-000000000000",
-  "version": "5",
-  "dialect": "pg",
+  "version": "7",
+  "dialect": "postgresql",
   "tables": {
-    "secrets": {
+    "public.secrets": {
       "name": "secrets",
       "schema": "",
       "columns": {
@@ -65,21 +63,24 @@
         "secrets_vault_id_vaults_id_fk": {
           "name": "secrets_vault_id_vaults_id_fk",
           "tableFrom": "secrets",
-          "tableTo": "vaults",
           "columnsFrom": [
             "vault_id"
           ],
+          "tableTo": "vaults",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
+      "uniqueConstraints": {},
+      "policies": {},
+      "isRLSEnabled": false,
+      "checkConstraints": {}
     },
-    "users": {
+    "public.users": {
       "name": "users",
       "schema": "",
       "columns": {
@@ -141,14 +142,17 @@
       "uniqueConstraints": {
         "users_github_id_unique": {
           "name": "users_github_id_unique",
-          "nullsNotDistinct": false,
           "columns": [
             "github_id"
-          ]
+          ],
+          "nullsNotDistinct": false
         }
-      }
+      },
+      "policies": {},
+      "isRLSEnabled": false,
+      "checkConstraints": {}
     },
-    "vaults": {
+    "public.vaults": {
       "name": "vaults",
       "schema": "",
       "columns": {
@@ -191,34 +195,43 @@
         "vaults_owner_id_users_id_fk": {
           "name": "vaults_owner_id_users_id_fk",
           "tableFrom": "vaults",
-          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
+          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "vaults_repo_full_name_unique": {
           "name": "vaults_repo_full_name_unique",
-          "nullsNotDistinct": false,
           "columns": [
             "repo_full_name"
-          ]
+          ],
+          "nullsNotDistinct": false
         }
-      }
+      },
+      "policies": {},
+      "isRLSEnabled": false,
+      "checkConstraints": {}
     }
   },
   "enums": {},
   "schemas": {},
   "_meta": {
-    "columns": {},
     "schemas": {},
-    "tables": {}
-  }
+    "tables": {},
+    "columns": {}
+  },
+  "id": "8b54efdf-4af0-4043-8a7b-b6f5f3ff9c8a",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "sequences": {},
+  "policies": {},
+  "views": {},
+  "roles": {}
 }

@@ -148,6 +148,13 @@
       "when": 1764600000000,
       "tag": "0020_add_stripe_subscriptions",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "5",
+      "when": 1764850000000,
+      "tag": "0021_add_github_app_tables",
+      "breakpoints": true
     }
   ]
 }

@@ -113,6 +113,27 @@ export async function authRoutes(fastify: FastifyInstance) {
           const installationId = parseInt(query.installation_id, 10);
           await handleInstallationCreated(installationId, user.id);
 
+          // If we have a signed state parameter, approve that specific device code
+          if (query.state) {
+            try {
+              const stateData = verifyState(query.state as string);
+              if (stateData?.deviceCodeId && stateData?.type === 'github_app_install') {
+                await db
+                  .update(deviceCodes)
+                  .set({ status: 'approved', userId: user.id })
+                  .where(eq(deviceCodes.id, stateData.deviceCodeId as string));
+
+                fastify.log.info({
+                  deviceCodeId: stateData.deviceCodeId,
+                  userId: user.id,
+                  username: user.username,
+                }, 'Device code approved via state parameter');
+              }
+            } catch (err) {
+              fastify.log.warn({ error: err }, 'Failed to verify state in GitHub App callback');
+            }
+          }
+
           trackEvent(user.id, AnalyticsEvents.AUTH_SUCCESS, {
             username: githubUser.username,
             method: 'github_app_install',
@@ -405,17 +426,24 @@ export async function authRoutes(fastify: FastifyInstance) {
     const userCode = generateUserCode();
     const expiresAt = new Date(Date.now() + DEVICE_FLOW_CONFIG.EXPIRES_IN * 1000);
 
-    await db.insert(deviceCodes).values({
+    const [deviceCodeRecord] = await db.insert(deviceCodes).values({
       deviceCode,
       userCode,
       status: 'pending',
       suggestedRepository: body.repository,
       expiresAt,
-    });
+    }).returning({ id: deviceCodes.id });
 
     const protocol = request.headers['x-forwarded-proto'] || (config.server.isDevelopment ? 'http' : 'https');
     const verificationUri = `${protocol}://${request.hostname}/v1/auth/device/verify`;
     const verificationUriComplete = `${verificationUri}?user_code=${userCode}`;
+
+    // Sign state with device code ID for GitHub App installation callback
+    const state = signState({
+      deviceCodeId: deviceCodeRecord.id,
+      type: 'github_app_install',
+    });
+    const githubAppInstallUrl = `${config.githubApp.installUrl}?state=${encodeURIComponent(state)}`;
 
     return {
       deviceCode,
@@ -424,7 +452,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       verificationUriComplete,
       expiresIn: DEVICE_FLOW_CONFIG.EXPIRES_IN,
       interval: DEVICE_FLOW_CONFIG.POLL_INTERVAL,
-      githubAppInstallUrl: config.githubApp.installUrl,
+      githubAppInstallUrl,
     };
   });
 

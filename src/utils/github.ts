@@ -357,10 +357,37 @@ export async function getUserRole(
 export async function getUserFromToken(accessToken: string) {
   try {
     const user = await getGitHubUser(accessToken);
+
+    // Get email - try /user/emails endpoint if email not in profile
+    let email = user.email;
+    if (!email) {
+      try {
+        const emailsResponse = await fetch(`${GITHUB_API_BASE}/user/emails`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: 'application/vnd.github.v3+json',
+          },
+        });
+        if (emailsResponse.ok) {
+          const emails = (await emailsResponse.json()) as Array<{
+            email: string;
+            primary: boolean;
+            verified: boolean;
+          }>;
+          // Get primary verified email, or first verified, or first email
+          const primaryEmail = emails.find(e => e.primary && e.verified);
+          const verifiedEmail = emails.find(e => e.verified);
+          email = primaryEmail?.email || verifiedEmail?.email || emails[0]?.email || null;
+        }
+      } catch {
+        // Ignore email fetch errors - email is optional
+      }
+    }
+
     return {
       githubId: user.id,
       username: user.login,
-      email: user.email,
+      email,
       avatarUrl: user.avatar_url,
     };
   } catch (error) {

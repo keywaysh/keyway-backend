@@ -134,7 +134,7 @@ export async function authenticateGitHub(
   if (!user) {
     request.log.warn({ userId: payload.userId }, 'Auth middleware: User not found in DB');
     clearSessionCookies(request, reply);
-    throw new UnauthorizedError('User not found');
+    throw new UnauthorizedError('Session expired or invalid. Please run `keyway login` to authenticate.');
   }
 
   // Step 3: Decrypt the GitHub access token stored in DB

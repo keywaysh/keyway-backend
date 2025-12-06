@@ -4,7 +4,6 @@ import { authenticateGitHub, requireAdminAccess } from '../../../middleware/auth
 import { db, users, vaults, secrets, environmentPermissions } from '../../../db';
 import { eq, and } from 'drizzle-orm';
 import { getVaultPermissions, getDefaultPermission } from '../../../utils/permissions';
-import { encryptAccessToken } from '../../../utils/tokenEncryption';
 import type { CollaboratorRole } from '../../../db/schema';
 import { sendData, sendPaginatedData, sendCreated, sendNoContent, NotFoundError, ForbiddenError, ConflictError, PlanLimitError, buildPaginationMeta, parsePagination } from '../../../lib';
 import { canCreateEnvironment, canCreateSecret } from '../../../config/plans';
@@ -27,7 +26,7 @@ import {
   canWriteToVault,
   getPrivateVaultAccess,
 } from '../../../services';
-import { getRepoInfo, getRepoCollaboratorsWithApp, getUserRoleWithApp } from '../../../utils/github';
+import { getRepoInfoWithApp, getRepoCollaboratorsWithApp, getUserRoleWithApp } from '../../../utils/github';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
 import { repoFullNameSchema, DEFAULT_ENVIRONMENTS } from '../../../types';
 import { getSecurityAlerts } from '../../../services/security.service';
@@ -107,7 +106,6 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     preHandler: [authenticateGitHub],
   }, async (request, reply) => {
     const githubUser = request.githubUser!;
-    const accessToken = request.accessToken!;
     const pagination = parsePagination(request.query);
 
     // Get user from database
@@ -121,7 +119,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       });
     }
 
-    const vaultList = await getVaultsForUser(user.id, accessToken, user.plan);
+    const vaultList = await getVaultsForUser(user.id, githubUser.username, user.plan);
 
     // Apply pagination (in-memory for now, could be optimized)
     const paginatedVaults = vaultList.slice(pagination.offset, pagination.offset + pagination.limit);
@@ -143,32 +141,20 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const body = CreateVaultSchema.parse(request.body);
     const githubUser = request.githubUser!;
-    const accessToken = request.accessToken!;
 
-    // Get repo info from GitHub to determine visibility
-    const repoInfo = await getRepoInfo(accessToken, body.repoFullName);
+    // Get repo info from GitHub App to determine visibility
+    const repoInfo = await getRepoInfoWithApp(body.repoFullName);
     if (!repoInfo) {
       throw new NotFoundError(`Repository '${body.repoFullName}' not found or you don't have access`);
     }
 
-    // Get or create user in our database
-    let user = await db.query.users.findFirst({
+    // Get user from database - must exist from auth flow
+    const user = await db.query.users.findFirst({
       where: eq(users.githubId, githubUser.githubId),
     });
 
     if (!user) {
-      const encryptedToken = await encryptAccessToken(accessToken);
-      const [newUser] = await db
-        .insert(users)
-        .values({
-          githubId: githubUser.githubId,
-          username: githubUser.username,
-          email: githubUser.email,
-          avatarUrl: githubUser.avatarUrl,
-          ...encryptedToken,
-        })
-        .returning();
-      user = newUser;
+      throw new ForbiddenError('User not found in database');
     }
 
     // Check plan limits before creating vault
@@ -238,7 +224,6 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const params = request.params as { owner: string; repo: string };
     const repoFullName = `${params.owner}/${params.repo}`;
     const githubUser = request.githubUser!;
-    const accessToken = request.accessToken!;
 
     // Get user to determine plan for isReadOnly calculation
     const user = await db.query.users.findFirst({
@@ -248,7 +233,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     // Default to 'free' plan if user not found (shouldn't happen but safe fallback)
     const userPlan = user?.plan ?? 'free';
 
-    const { vault, hasAccess } = await getVaultByRepo(repoFullName, accessToken, userPlan);
+    const { vault, hasAccess } = await getVaultByRepo(repoFullName, githubUser.username, userPlan);
 
     if (!vault || !hasAccess) {
       throw new NotFoundError(`Vault '${repoFullName}' not found or you don't have access`);
@@ -1012,7 +997,6 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const params = request.params as { owner: string; repo: string };
     const { owner, repo } = params;
     const repoFullName = `${owner}/${repo}`;
-    const accessToken = request.accessToken!;
 
     // Check if vault exists
     const vault = await getVaultByRepoInternal(repoFullName);
@@ -1059,7 +1043,6 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const params = request.params as { owner: string; repo: string };
     const { owner, repo } = params;
     const repoFullName = `${owner}/${repo}`;
-    const accessToken = request.accessToken!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {

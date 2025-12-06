@@ -1,6 +1,6 @@
 import { db, vaults, secrets } from '../db';
 import { eq, desc, and, asc } from 'drizzle-orm';
-import { getRepoPermission, getRepoAccessAndPermission } from '../utils/github';
+import { getUserRoleWithApp } from '../utils/github';
 import type { UserPlan } from '../db/schema';
 import { PLANS } from '../config/plans';
 
@@ -74,10 +74,11 @@ async function getExcessPrivateVaultIds(userId: string, plan: UserPlan): Promise
 
 /**
  * Get all vaults for a user with their metadata
+ * Uses GitHub App token to check user's permission on each repo
  */
 export async function getVaultsForUser(
   userId: string,
-  accessToken: string,
+  username: string,
   plan: UserPlan
 ): Promise<VaultListItem[]> {
   const ownedVaults = await db.query.vaults.findMany({
@@ -101,8 +102,8 @@ export async function getVaultsForUser(
         environments.push('default');
       }
 
-      // Fetch user's permission for this repo
-      const permission = await getRepoPermission(accessToken, vault.repoFullName);
+      // Fetch user's permission for this repo using GitHub App token
+      const permission = await getUserRoleWithApp(vault.repoFullName, username);
 
       // Private vaults beyond plan limit are read-only
       const isReadOnly = vault.isPrivate && excessVaultIds.has(vault.id);
@@ -127,10 +128,11 @@ export async function getVaultsForUser(
 
 /**
  * Get vault by repo full name with access check
+ * Uses GitHub App token to check user's permission
  */
 export async function getVaultByRepo(
   repoFullName: string,
-  accessToken: string,
+  username: string,
   plan: UserPlan
 ): Promise<{ vault: VaultDetails; hasAccess: boolean }> {
   const vault = await db.query.vaults.findFirst({
@@ -145,12 +147,10 @@ export async function getVaultByRepo(
     return { vault: null as unknown as VaultDetails, hasAccess: false };
   }
 
-  const { hasAccess, permission } = await getRepoAccessAndPermission(
-    accessToken,
-    vault.repoFullName
-  );
+  // Check user's role using GitHub App token
+  const role = await getUserRoleWithApp(vault.repoFullName, username);
 
-  if (!hasAccess) {
+  if (!role) {
     return { vault: null as unknown as VaultDetails, hasAccess: false };
   }
 
@@ -175,7 +175,7 @@ export async function getVaultByRepo(
       repoAvatar: getGitHubAvatarUrl(repoOwner),
       secretCount: vault.secrets.length,
       environments,
-      permission,
+      permission: role,
       isPrivate: vault.isPrivate,
       isReadOnly,
       createdAt: vault.createdAt.toISOString(),

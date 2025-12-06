@@ -64,6 +64,8 @@ export async function getInstallationToken(
   installationId: number,
   options?: { repositories?: number[] }
 ): Promise<string> {
+  console.log(`[GitHubApp] Getting installation token for installation ${installationId}`);
+
   // Find the installation in our database
   const installation = await db.query.githubAppInstallations.findFirst({
     where: eq(githubAppInstallations.installationId, installationId),
@@ -71,8 +73,11 @@ export async function getInstallationToken(
   });
 
   if (!installation) {
+    console.error(`[GitHubApp] Installation ${installationId} not found in database`);
     throw new NotFoundError(`Installation ${installationId} not found`);
   }
+
+  console.log(`[GitHubApp] Found installation: account=${installation.accountLogin}, status=${installation.status}, selection=${installation.repositorySelection}`);
 
   // Check if we have a cached token that's still valid
   if (installation.tokenCache) {
@@ -80,6 +85,7 @@ export async function getInstallationToken(
     const isValid = expiresAt.getTime() > Date.now() + TOKEN_REFRESH_BUFFER_MS;
 
     if (isValid) {
+      console.log(`[GitHubApp] Using cached token (expires: ${expiresAt.toISOString()})`);
       // Decrypt and return cached token
       const encryptionService = await getEncryptionService();
       return encryptionService.decrypt({
@@ -88,7 +94,11 @@ export async function getInstallationToken(
         authTag: installation.tokenCache.tokenAuthTag,
         version: installation.tokenCache.tokenEncryptionVersion,
       });
+    } else {
+      console.log(`[GitHubApp] Cached token expired or expiring soon (expires: ${expiresAt.toISOString()}), refreshing...`);
     }
+  } else {
+    console.log(`[GitHubApp] No cached token found, generating new one...`);
   }
 
   // Generate new installation token
@@ -113,6 +123,7 @@ export async function getInstallationToken(
 
   if (!response.ok) {
     const error = await response.text();
+    console.error(`[GitHubApp] Failed to get installation token from GitHub API: status=${response.status}, error=${error}`);
     throw new Error(`Failed to get installation token: ${response.status} ${error}`);
   }
 
@@ -120,6 +131,8 @@ export async function getInstallationToken(
     token: string;
     expires_at: string;
   };
+
+  console.log(`[GitHubApp] Successfully obtained new installation token (expires: ${data.expires_at})`);
 
   // Encrypt and cache the token
   const encryptionService = await getEncryptionService();
@@ -159,6 +172,7 @@ export async function findInstallationForRepo(
   repoName: string
 ): Promise<GithubAppInstallation | null> {
   const repoFullName = `${repoOwner}/${repoName}`;
+  console.log(`[GitHubApp] Finding installation for repo: ${repoFullName}`);
 
   // First, check if repo is in selected repos for any installation
   const repoEntry = await db.query.githubAppInstallationRepos.findFirst({
@@ -167,7 +181,12 @@ export async function findInstallationForRepo(
   });
 
   if (repoEntry?.installation && repoEntry.installation.status === 'active') {
+    console.log(`[GitHubApp] Found via selected repos: installationId=${repoEntry.installation.installationId}, account=${repoEntry.installation.accountLogin}`);
     return repoEntry.installation;
+  }
+
+  if (repoEntry?.installation) {
+    console.log(`[GitHubApp] Found repo entry but installation not active: status=${repoEntry.installation.status}`);
   }
 
   // Check if there's an "all repos" installation for this account
@@ -179,7 +198,13 @@ export async function findInstallationForRepo(
     ),
   });
 
-  return allReposInstallation ?? null;
+  if (allReposInstallation) {
+    console.log(`[GitHubApp] Found via 'all repos' installation: installationId=${allReposInstallation.installationId}, account=${allReposInstallation.accountLogin}`);
+    return allReposInstallation;
+  }
+
+  console.warn(`[GitHubApp] No installation found for ${repoFullName}`);
+  return null;
 }
 
 /**

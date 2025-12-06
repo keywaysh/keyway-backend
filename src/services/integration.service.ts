@@ -137,12 +137,14 @@ type ConnectionWithTokens = {
 async function getValidAccessToken(connection: ConnectionWithTokens): Promise<string> {
   // Check if token is expired
   if (connection.tokenExpiresAt && connection.tokenExpiresAt < new Date()) {
+    console.log(`[IntegrationService] Token expired for connection ${connection.id} (provider: ${connection.provider}), attempting refresh...`);
     const provider = getProvider(connection.provider);
     const refreshToken = await decryptProviderRefreshToken(connection);
 
     if (provider?.refreshToken && refreshToken) {
       try {
         const newTokens = await provider.refreshToken(refreshToken);
+        console.log(`[IntegrationService] Token refreshed successfully for connection ${connection.id}`);
 
         // Update connection with new tokens
         const encrypted = await encryptProviderToken(newTokens.accessToken);
@@ -158,11 +160,13 @@ async function getValidAccessToken(connection: ConnectionWithTokens): Promise<st
           .where(eq(providerConnections.id, connection.id));
 
         return newTokens.accessToken;
-      } catch {
+      } catch (error) {
+        console.error(`[IntegrationService] Token refresh failed for connection ${connection.id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
         throw new Error('Token expired and refresh failed. Please reconnect to provider.');
       }
     }
 
+    console.error(`[IntegrationService] Token expired and no refresh token available for connection ${connection.id}`);
     throw new Error('Token expired. Please reconnect to provider.');
   }
 
@@ -519,6 +523,8 @@ export async function executeSync(
   allowDelete: boolean,
   triggeredBy: string
 ): Promise<SyncResult> {
+  console.log(`[IntegrationService] executeSync started: vault=${vaultId}, direction=${direction}, env=${keywayEnvironment}->${providerEnvironment}`);
+
   // Validate connection belongs to the user (IDOR protection)
   const connection = await db.query.providerConnections.findFirst({
     where: and(
@@ -528,11 +534,15 @@ export async function executeSync(
   });
 
   if (!connection) {
+    console.error(`[IntegrationService] Connection ${connectionId} not found for user ${triggeredBy}`);
     throw new Error('Connection not found');
   }
 
+  console.log(`[IntegrationService] Connection found: provider=${connection.provider}, teamId=${connection.providerTeamId}`);
+
   const provider = getProvider(connection.provider);
   if (!provider) {
+    console.error(`[IntegrationService] Provider ${connection.provider} not found`);
     throw new Error(`Provider ${connection.provider} not found`);
   }
 
@@ -619,13 +629,16 @@ export async function executeSync(
     });
 
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[IntegrationService] Sync failed: ${errorMessage}`);
+
     result = {
       status: 'failed',
       created: 0,
       updated: 0,
       deleted: 0,
       skipped: 0,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: errorMessage,
     };
 
     // Log the failed sync (outside transaction since sync failed)
@@ -644,6 +657,7 @@ export async function executeSync(
     });
   }
 
+  console.log(`[IntegrationService] Sync completed: status=${result.status}, created=${result.created}, updated=${result.updated}, deleted=${result.deleted}, skipped=${result.skipped}`);
   return result;
 }
 

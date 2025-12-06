@@ -146,6 +146,9 @@ function isProviderConfigured(name: string): boolean {
   switch (name) {
     case 'vercel':
       return !!(config.vercel?.clientId && config.vercel?.clientSecret);
+    case 'railway':
+      // Railway uses direct API token auth, always configured
+      return true;
     default:
       return false;
   }

@@ -195,6 +195,78 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
   });
 
   /**
+   * POST /integrations/:provider/connect
+   * Connect with API token (for providers like Railway that don't use OAuth)
+   */
+  fastify.post('/:provider/connect', {
+    preHandler: [authenticateGitHub],
+  }, async (request, reply) => {
+    const { provider: providerName } = request.params as { provider: string };
+    const body = request.body as { token?: string };
+
+    if (!body.token) {
+      throw new BadRequestError('Token is required');
+    }
+
+    const provider = getProvider(providerName);
+    if (!provider) {
+      throw new NotFoundError(`Provider ${providerName} not found`);
+    }
+
+    // Only allow token-based auth for specific providers
+    const tokenAuthProviders = ['railway'];
+    if (!tokenAuthProviders.includes(providerName)) {
+      throw new BadRequestError(`Provider ${providerName} requires OAuth authentication`);
+    }
+
+    // Get Keyway user
+    const user = await db.query.users.findFirst({
+      where: eq(users.githubId, request.githubUser!.githubId),
+    });
+
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    // Check provider limit before creating connection
+    const existingConnections = await listConnections(user.id);
+    const providerCheck = canConnectProvider(user.plan, existingConnections.length);
+    if (!providerCheck.allowed) {
+      throw new PlanLimitError(providerCheck.reason || 'Provider limit reached');
+    }
+
+    // Validate token by fetching user info
+    let providerUser;
+    try {
+      providerUser = await provider.getUser(body.token);
+    } catch (error) {
+      throw new BadRequestError('Invalid API token. Please check your token and try again.');
+    }
+
+    // Store connection (no refresh token or expiry for API tokens)
+    await createConnection(
+      user.id,
+      providerName,
+      body.token,
+      { id: providerUser.id, teamId: providerUser.teamId },
+      undefined, // no refresh token
+      undefined, // no expiry
+      undefined  // no scopes
+    );
+
+    return sendData(reply, {
+      success: true,
+      provider: providerName,
+      user: {
+        id: providerUser.id,
+        username: providerUser.username,
+        email: providerUser.email,
+        teamName: providerUser.teamName,
+      },
+    }, { requestId: request.id });
+  });
+
+  /**
    * GET /integrations/:provider/authorize
    * Start OAuth flow for a provider
    */

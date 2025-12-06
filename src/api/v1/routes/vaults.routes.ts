@@ -27,7 +27,7 @@ import {
   canWriteToVault,
   getPrivateVaultAccess,
 } from '../../../services';
-import { hasRepoAccess, getRepoInfo, getRepoCollaboratorsWithApp, getUserRoleWithApp } from '../../../utils/github';
+import { getRepoInfo, getRepoCollaboratorsWithApp, getUserRoleWithApp } from '../../../utils/github';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
 import { repoFullNameSchema, DEFAULT_ENVIRONMENTS } from '../../../types';
 import { getSecurityAlerts } from '../../../services/security.service';
@@ -327,7 +327,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const accessToken = request.accessToken!;
+    const githubUser = request.githubUser!;
     const pagination = parsePagination(request.query);
 
     const vault = await getVaultByRepoInternal(repoFullName);
@@ -335,8 +335,8 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       throw new NotFoundError('Vault not found');
     }
 
-    const hasAccess = await hasRepoAccess(accessToken, vault.repoFullName);
-    if (!hasAccess) {
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
 
@@ -368,21 +368,18 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const repoFullName = `${params.owner}/${params.repo}`;
     const body = UpsertSecretSchema.parse(request.body);
     const githubUser = request.githubUser!;
-    const accessToken = request.accessToken!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    const hasAccess = await hasRepoAccess(accessToken, vault.repoFullName);
-    if (!hasAccess) {
+    // Check GitHub write permission using GitHub App (write, maintain, or admin)
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
-
-    // Check GitHub write permission (write, maintain, or admin)
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
-    const canWriteGitHub = role && ['write', 'maintain', 'admin'].includes(role);
+    const canWriteGitHub = ['write', 'maintain', 'admin'].includes(role);
     if (!canWriteGitHub) {
       throw new ForbiddenError('You need write access to this repository to create or update secrets');
     }
@@ -454,21 +451,18 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const repoFullName = `${params.owner}/${params.repo}`;
     const body = PatchSecretSchema.parse(request.body);
     const githubUser = request.githubUser!;
-    const accessToken = request.accessToken!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    const hasAccess = await hasRepoAccess(accessToken, vault.repoFullName);
-    if (!hasAccess) {
+    // Check GitHub write permission using GitHub App (write, maintain, or admin)
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
-
-    // Check GitHub write permission (write, maintain, or admin)
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
-    const canWriteGitHub = role && ['write', 'maintain', 'admin'].includes(role);
+    const canWriteGitHub = ['write', 'maintain', 'admin'].includes(role);
     if (!canWriteGitHub) {
       throw new ForbiddenError('You need write access to this repository to update secrets');
     }
@@ -517,21 +511,18 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const params = request.params as { owner: string; repo: string; secretId: string };
     const repoFullName = `${params.owner}/${params.repo}`;
     const githubUser = request.githubUser!;
-    const accessToken = request.accessToken!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    const hasAccess = await hasRepoAccess(accessToken, vault.repoFullName);
-    if (!hasAccess) {
+    // Check GitHub write permission using GitHub App (write, maintain, or admin)
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
-
-    // Check GitHub write permission (write, maintain, or admin)
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
-    const canWriteGitHub = role && ['write', 'maintain', 'admin'].includes(role);
+    const canWriteGitHub = ['write', 'maintain', 'admin'].includes(role);
     if (!canWriteGitHub) {
       throw new ForbiddenError('You need write access to this repository to delete secrets');
     }
@@ -581,15 +572,15 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const accessToken = request.accessToken!;
+    const githubUser = request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    const hasAccess = await hasRepoAccess(accessToken, vault.repoFullName);
-    if (!hasAccess) {
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
 
@@ -850,15 +841,15 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const accessToken = request.accessToken!;
+    const githubUser = request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    const hasAccess = await hasRepoAccess(accessToken, vault.repoFullName);
-    if (!hasAccess) {
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
 
@@ -977,15 +968,15 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const query = request.query as { limit?: string; offset?: string };
     const limit = Math.min(parseInt(query.limit || '50', 10), 100);
     const offset = parseInt(query.offset || '0', 10);
-    const accessToken = request.accessToken!;
+    const githubUser = request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    const hasAccess = await hasRepoAccess(accessToken, vault.repoFullName);
-    if (!hasAccess) {
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
 

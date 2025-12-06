@@ -52,8 +52,7 @@ function getWelcomeEmailHtml(username: string): string {
 
   <div style="background: #f7fafc; border-radius: 8px; padding: 20px; margin: 24px 0;">
     <p style="margin: 0 0 12px 0; font-weight: 600;">Getting started takes 30 seconds:</p>
-    <pre style="background: #1a202c; color: #e2e8f0; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 14px; margin: 0;">keyway login
-keyway init
+    <pre style="background: #1a202c; color: #e2e8f0; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 14px; margin: 0;">keyway init
 keyway push</pre>
   </div>
 
@@ -94,7 +93,6 @@ We just launched, and I'm thrilled to have you on board. Keyway gives you GitHub
 
 Getting started takes 30 seconds:
 
-  keyway login
   keyway init
   keyway push
 

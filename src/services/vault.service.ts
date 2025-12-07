@@ -21,6 +21,12 @@ export interface VaultWithSecrets {
   }>;
 }
 
+export interface VaultSyncInfo {
+  provider: string;
+  projectName: string | null;
+  lastSyncedAt: string | null;
+}
+
 export interface VaultListItem {
   id: string;
   repoOwner: string;
@@ -31,6 +37,7 @@ export interface VaultListItem {
   permission: string | null;
   isPrivate: boolean;
   isReadOnly: boolean;
+  syncs: VaultSyncInfo[];
   updatedAt: string;
 }
 
@@ -45,6 +52,7 @@ export interface VaultDetails {
   permission: string | null;
   isPrivate: boolean;
   isReadOnly: boolean;
+  syncs: VaultSyncInfo[];
   createdAt: string;
   updatedAt: string;
 }
@@ -85,6 +93,7 @@ export async function getVaultsForUser(
     where: eq(vaults.ownerId, userId),
     with: {
       secrets: true,
+      vaultSyncs: true,
     },
     orderBy: [desc(vaults.updatedAt)],
   });
@@ -108,6 +117,13 @@ export async function getVaultsForUser(
       // Private vaults beyond plan limit are read-only
       const isReadOnly = vault.isPrivate && excessVaultIds.has(vault.id);
 
+      // Get unique providers from syncs
+      const syncs = vault.vaultSyncs.map(sync => ({
+        provider: sync.provider,
+        projectName: sync.providerProjectName,
+        lastSyncedAt: sync.lastSyncedAt?.toISOString() || null,
+      }));
+
       return {
         id: vault.id,
         repoOwner,
@@ -118,6 +134,7 @@ export async function getVaultsForUser(
         permission,
         isPrivate: vault.isPrivate,
         isReadOnly,
+        syncs,
         updatedAt: vault.updatedAt.toISOString(),
       };
     })
@@ -140,6 +157,7 @@ export async function getVaultByRepo(
     with: {
       secrets: true,
       owner: true,
+      vaultSyncs: true,
     },
   });
 
@@ -166,6 +184,13 @@ export async function getVaultByRepo(
   const excessVaultIds = await getExcessPrivateVaultIds(vault.ownerId, plan);
   const isReadOnly = vault.isPrivate && excessVaultIds.has(vault.id);
 
+  // Get syncs info
+  const syncs = vault.vaultSyncs.map(sync => ({
+    provider: sync.provider,
+    projectName: sync.providerProjectName,
+    lastSyncedAt: sync.lastSyncedAt?.toISOString() || null,
+  }));
+
   return {
     vault: {
       id: vault.id,
@@ -178,6 +203,7 @@ export async function getVaultByRepo(
       permission: role,
       isPrivate: vault.isPrivate,
       isReadOnly,
+      syncs,
       createdAt: vault.createdAt.toISOString(),
       updatedAt: vault.updatedAt.toISOString(),
     },

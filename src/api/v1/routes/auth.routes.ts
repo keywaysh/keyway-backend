@@ -67,6 +67,45 @@ async function upsertUser(githubUser: { githubId: number; username: string; emai
   return { user, isNewUser: !existingUser };
 }
 
+// Helper to set session cookies
+function setSessionCookies(
+  reply: { setCookie: (name: string, value: string, options: Record<string, unknown>) => void },
+  request: { headers: { host?: string } },
+  keywayToken: string
+) {
+  const isProduction = config.server.isProduction;
+  const maxAge = 30 * 24 * 60 * 60; // 30 days
+
+  const host = (request.headers.host || '').split(':')[0];
+  const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
+  let domain: string | undefined;
+
+  if (isProduction && !isLocalhost) {
+    const parts = host.split('.');
+    if (parts.length >= 2) {
+      domain = `.${parts.slice(-2).join('.')}`;
+    }
+  }
+
+  reply.setCookie('keyway_session', keywayToken, {
+    path: '/',
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: 'lax',
+    maxAge,
+    domain,
+  });
+
+  reply.setCookie('keyway_logged_in', 'true', {
+    path: '/',
+    httpOnly: false,
+    secure: isProduction,
+    sameSite: 'lax',
+    maxAge,
+    domain,
+  });
+}
+
 /**
  * Auth routes
  * GET  /v1/auth/github/start     - Start web OAuth flow
@@ -113,7 +152,8 @@ export async function authRoutes(fastify: FastifyInstance) {
           const installationId = parseInt(query.installation_id, 10);
           await handleInstallationCreated(installationId, user.id);
 
-          // If we have a signed state parameter, approve that specific device code
+          // If we have a signed state parameter from CLI, approve that specific device code
+          let isFromCli = false;
           if (query.state) {
             try {
               const stateData = verifyState(query.state as string);
@@ -128,6 +168,7 @@ export async function authRoutes(fastify: FastifyInstance) {
                   userId: user.id,
                   username: user.username,
                 }, 'Device code approved via state parameter');
+                isFromCli = true;
               }
             } catch (err) {
               fastify.log.warn({ error: err }, 'Failed to verify state in GitHub App callback');
@@ -160,46 +201,18 @@ export async function authRoutes(fastify: FastifyInstance) {
             }
           }
 
-          // Set session cookies
+          // CLI flow: show "return to terminal" page
+          if (isFromCli) {
+            return reply.type('text/html').send(renderInstallSuccessPage(query.installation_id));
+          }
+
+          // Web flow (direct install from GitHub Marketplace): set cookies and redirect to dashboard
           const keywayToken = generateKeywayToken({
             userId: user.id,
             githubId: user.githubId,
             username: user.username,
           });
-
-          const isProduction = config.server.isProduction;
-          const maxAge = 30 * 24 * 60 * 60;
-
-          const host = (request.headers.host || '').split(':')[0];
-          const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
-          let domain: string | undefined;
-
-          if (isProduction && !isLocalhost) {
-            const parts = host.split('.');
-            if (parts.length >= 2) {
-              domain = `.${parts.slice(-2).join('.')}`;
-            }
-          }
-
-          reply.setCookie('keyway_session', keywayToken, {
-            path: '/',
-            httpOnly: true,
-            secure: isProduction,
-            sameSite: 'lax',
-            maxAge,
-            domain,
-          });
-
-          reply.setCookie('keyway_logged_in', 'true', {
-            path: '/',
-            httpOnly: false,
-            secure: isProduction,
-            sameSite: 'lax',
-            maxAge,
-            domain,
-          });
-
-          // Redirect to dashboard
+          setSessionCookies(reply, request, keywayToken);
           return reply.redirect(`${config.app.frontendUrl}${config.app.dashboardPath}`);
         } catch (error) {
           fastify.log.error({ err: error, installationId: query.installation_id }, 'GitHub App installation error');
@@ -261,56 +274,9 @@ export async function authRoutes(fastify: FastifyInstance) {
           }
         }
 
-        const isProduction = config.server.isProduction;
-        const maxAge = 30 * 24 * 60 * 60; // 30 days in seconds
+        setSessionCookies(reply, request, keywayToken);
 
-        // Determine domain for cookie
-        const host = (request.headers.host || '').split(':')[0];
-        const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
-        let domain: string | undefined;
-
-        if (isProduction && !isLocalhost) {
-          const parts = host.split('.');
-          if (parts.length >= 2) {
-            domain = `.${parts.slice(-2).join('.')}`;
-          }
-        }
-
-        // Set session cookie with all security flags
-        reply.setCookie('keyway_session', keywayToken, {
-          path: '/',
-          httpOnly: true, // Prevent XSS access
-          secure: isProduction, // HTTPS only in production
-          sameSite: 'lax', // CSRF protection
-          maxAge,
-          domain,
-        });
-
-        // Set flag cookie (readable by JavaScript for client-side auth status)
-        reply.setCookie('keyway_logged_in', 'true', {
-          path: '/',
-          httpOnly: false, // Intentionally false - needed for client-side checks
-          secure: isProduction,
-          sameSite: 'lax',
-          maxAge,
-          domain,
-        });
-
-        // In development with different ports, pass token via URL for frontend to set cookies
-        // In production, cookies work because same domain
-        let redirectUrl = (stateData.redirectUri as string | null) || `${config.app.frontendUrl}${config.app.dashboardPath}`;
-
-        // If redirect URL is to a different port (dev mode), pass token via URL param
-        const backendHost = request.headers.host || '';
-        const redirectUrlObj = new URL(redirectUrl);
-        if (!isProduction && backendHost.split(':')[0] === redirectUrlObj.hostname && backendHost !== `${redirectUrlObj.hostname}:${redirectUrlObj.port}`) {
-          // Different ports on localhost - use callback with token
-          const callbackUrl = new URL('/auth/callback', redirectUrl);
-          callbackUrl.searchParams.set('token', keywayToken);
-          callbackUrl.searchParams.set('redirect', redirectUrlObj.pathname);
-          redirectUrl = callbackUrl.toString();
-        }
-
+        const redirectUrl = (stateData.redirectUri as string | null) || `${config.app.frontendUrl}${config.app.dashboardPath}`;
         return reply.redirect(redirectUrl);
       } else if (stateData.deviceCodeId) {
         await db

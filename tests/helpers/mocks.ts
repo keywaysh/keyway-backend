@@ -178,5 +178,9 @@ export function createMockGitHubUtils() {
     getRepoAccessAndPermission: vi.fn().mockResolvedValue({ hasAccess: true, permission: 'admin' }),
     getUserRole: vi.fn().mockResolvedValue('admin'),
     getRepoInfo: vi.fn().mockResolvedValue({ isPrivate: false }),
+    // GitHub App-powered functions (used by current codebase)
+    getRepoInfoWithApp: vi.fn().mockResolvedValue({ isPrivate: false, isOrganization: false }),
+    getUserRoleWithApp: vi.fn().mockResolvedValue('admin'),
+    getRepoCollaboratorsWithApp: vi.fn().mockResolvedValue([]),
   };
 }

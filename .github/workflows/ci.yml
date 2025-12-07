@@ -54,9 +54,8 @@ jobs:
           GITHUB_CLIENT_SECRET: test
         run: pnpm run db:migrate
 
-      # TODO: Add tests when implemented
-      # - name: Run tests
-      #   run: pnpm test
+      - name: Run tests
+        run: pnpm test
 
   deploy:
     needs: test

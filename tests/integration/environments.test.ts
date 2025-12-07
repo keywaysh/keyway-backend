@@ -33,9 +33,9 @@ vi.mock('../../src/services', () => ({
   detectPlatform: vi.fn().mockReturnValue('api'),
 }));
 
-// Mock auth middleware
+// Mock auth middleware (async for Fastify 5)
 vi.mock('../../src/middleware/auth', () => ({
-  authenticateGitHub: vi.fn((request: any, reply: any, done: any) => {
+  authenticateGitHub: vi.fn(async (request: any) => {
     request.githubUser = {
       githubId: mockUser.githubId,
       username: mockUser.username,
@@ -43,10 +43,9 @@ vi.mock('../../src/middleware/auth', () => ({
       avatarUrl: mockUser.avatarUrl,
     };
     request.accessToken = 'test-token';
-    done();
   }),
-  requireAdminAccess: vi.fn((request: any, reply: any, done: any) => {
-    done();
+  requireAdminAccess: vi.fn(async () => {
+    // Allow access by default
   }),
 }));
 

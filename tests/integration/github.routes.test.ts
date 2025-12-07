@@ -104,7 +104,7 @@ describe('GitHub Routes - Webhook Security', () => {
     await app.close();
   });
 
-  describe('POST /v1/github/webhooks', () => {
+  describe('POST /v1/github/webhook', () => {
     const validPayload = {
       action: 'created',
       installation: {
@@ -128,7 +128,7 @@ describe('GitHub Routes - Webhook Security', () => {
 
       const response = await app.inject({
         method: 'POST',
-        url: '/v1/github/webhooks',
+        url: '/v1/github/webhook',
         headers: {
           'content-type': 'application/json',
           'x-hub-signature-256': signature,
@@ -149,7 +149,7 @@ describe('GitHub Routes - Webhook Security', () => {
 
       const response = await app.inject({
         method: 'POST',
-        url: '/v1/github/webhooks',
+        url: '/v1/github/webhook',
         headers: {
           'content-type': 'application/json',
           'x-hub-signature-256': invalidSignature,
@@ -174,7 +174,7 @@ describe('GitHub Routes - Webhook Security', () => {
 
       const response = await app.inject({
         method: 'POST',
-        url: '/v1/github/webhooks',
+        url: '/v1/github/webhook',
         headers: {
           'content-type': 'application/json',
           'x-hub-signature-256': signature,
@@ -192,7 +192,7 @@ describe('GitHub Routes - Webhook Security', () => {
 
       const response = await app.inject({
         method: 'POST',
-        url: '/v1/github/webhooks',
+        url: '/v1/github/webhook',
         headers: {
           'content-type': 'application/json',
           'x-github-event': 'installation',
@@ -210,7 +210,7 @@ describe('GitHub Routes - Webhook Security', () => {
 
       const response = await app.inject({
         method: 'POST',
-        url: '/v1/github/webhooks',
+        url: '/v1/github/webhook',
         headers: {
           'content-type': 'application/json',
           'x-hub-signature-256': signature,
@@ -230,7 +230,7 @@ describe('GitHub Routes - Webhook Security', () => {
 
       await app.inject({
         method: 'POST',
-        url: '/v1/github/webhooks',
+        url: '/v1/github/webhook',
         headers: {
           'content-type': 'application/json',
           'x-hub-signature-256': signature,
@@ -260,7 +260,7 @@ describe('GitHub Routes - Webhook Security', () => {
 
       await app.inject({
         method: 'POST',
-        url: '/v1/github/webhooks',
+        url: '/v1/github/webhook',
         headers: {
           'content-type': 'application/json',
           'x-hub-signature-256': signature,
@@ -285,7 +285,7 @@ describe('GitHub Routes - Webhook Security', () => {
 
       await app.inject({
         method: 'POST',
-        url: '/v1/github/webhooks',
+        url: '/v1/github/webhook',
         headers: {
           'content-type': 'application/json',
           'x-hub-signature-256': signature,
@@ -314,7 +314,7 @@ describe('GitHub Routes - Webhook Security', () => {
 
       await app.inject({
         method: 'POST',
-        url: '/v1/github/webhooks',
+        url: '/v1/github/webhook',
         headers: {
           'content-type': 'application/json',
           'x-hub-signature-256': signature,
@@ -345,7 +345,7 @@ describe('GitHub Routes - Webhook Security', () => {
       const start1 = performance.now();
       await app.inject({
         method: 'POST',
-        url: '/v1/github/webhooks',
+        url: '/v1/github/webhook',
         headers: {
           'content-type': 'application/json',
           'x-hub-signature-256': invalidSig1,
@@ -359,7 +359,7 @@ describe('GitHub Routes - Webhook Security', () => {
       const start2 = performance.now();
       await app.inject({
         method: 'POST',
-        url: '/v1/github/webhooks',
+        url: '/v1/github/webhook',
         headers: {
           'content-type': 'application/json',
           'x-hub-signature-256': invalidSig2,

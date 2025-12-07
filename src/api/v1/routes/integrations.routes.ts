@@ -281,6 +281,19 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
       throw new NotFoundError(`Provider ${providerName} not found`);
     }
 
+    // Check provider limit BEFORE redirecting to OAuth
+    const user = await db.query.users.findFirst({
+      where: eq(users.githubId, request.githubUser!.githubId),
+    });
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+    const existingConnections = await listConnections(user.id);
+    const providerCheck = canConnectProvider(user.plan, existingConnections.length);
+    if (!providerCheck.allowed) {
+      throw new PlanLimitError(providerCheck.reason || 'Provider limit reached');
+    }
+
     // Validate redirect_uri upfront if provided (prevents signing invalid URIs)
     let validatedRedirectUri: string | null = null;
     if (query.redirect_uri) {

@@ -15,7 +15,7 @@ describe('Plan Configuration', () => {
       expect(PLANS.free).toEqual({
         maxPublicRepos: Infinity,
         maxPrivateRepos: 1,
-        maxProviders: 1,
+        maxProviders: 2,
         maxEnvironmentsPerVault: 2,
         maxSecretsPerPrivateVault: 20,
       });
@@ -92,15 +92,15 @@ describe('Plan Limit Checks', () => {
   });
 
   describe('canConnectProvider', () => {
-    it('should allow free plan first provider', () => {
-      const result = canConnectProvider('free', 0);
-      expect(result.allowed).toBe(true);
+    it('should allow free plan first two providers', () => {
+      expect(canConnectProvider('free', 0).allowed).toBe(true);
+      expect(canConnectProvider('free', 1).allowed).toBe(true);
     });
 
-    it('should reject free plan second provider', () => {
-      const result = canConnectProvider('free', 1);
+    it('should reject free plan third provider', () => {
+      const result = canConnectProvider('free', 2);
       expect(result.allowed).toBe(false);
-      expect(result.reason).toContain('1 provider connection');
+      expect(result.reason).toContain('2 provider connections');
     });
 
     it('should allow pro plan unlimited providers', () => {

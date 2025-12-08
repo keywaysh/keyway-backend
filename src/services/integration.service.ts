@@ -395,6 +395,114 @@ export async function getSyncStatus(
 }
 
 /**
+ * Bi-directional diff result
+ */
+export interface SyncDiff {
+  keywayCount: number;
+  providerCount: number;
+  onlyInKeyway: string[];
+  onlyInProvider: string[];
+  different: string[];
+  same: string[];
+}
+
+/**
+ * Get bi-directional sync diff (compare Keyway vs Provider)
+ * Returns what's different on each side, without specifying a direction
+ */
+export async function getSyncDiff(
+  vaultId: string,
+  connectionId: string,
+  projectId: string,
+  keywayEnvironment: string,
+  providerEnvironment: string,
+  userId: string
+): Promise<SyncDiff> {
+  // Validate connection belongs to the user (IDOR protection)
+  const connection = await db.query.providerConnections.findFirst({
+    where: and(
+      eq(providerConnections.id, connectionId),
+      eq(providerConnections.userId, userId)
+    ),
+  });
+
+  if (!connection) {
+    throw new Error('Connection not found');
+  }
+
+  const provider = getProvider(connection.provider);
+  if (!provider) {
+    throw new Error(`Provider ${connection.provider} not found`);
+  }
+
+  const accessToken = await getValidAccessToken(connection);
+
+  // Get Keyway secrets
+  const keywaySecrets = await db.query.secrets.findMany({
+    where: and(
+      eq(secrets.vaultId, vaultId),
+      eq(secrets.environment, keywayEnvironment)
+    ),
+  });
+
+  const keywaySecretsMap = new Map<string, string>();
+  for (const secret of keywaySecrets) {
+    const decrypted = await safeDecryptSecret(secret);
+    if (decrypted) {
+      keywaySecretsMap.set(decrypted.key, decrypted.value);
+    }
+  }
+
+  // Get provider secrets
+  const providerEnvVars = await provider.listEnvVars(
+    accessToken,
+    projectId,
+    providerEnvironment,
+    connection.providerTeamId || undefined
+  );
+
+  const providerSecretsMap = new Map<string, string>();
+  for (const envVar of providerEnvVars) {
+    if (envVar.value) {
+      providerSecretsMap.set(envVar.key, envVar.value);
+    }
+  }
+
+  const onlyInKeyway: string[] = [];
+  const onlyInProvider: string[] = [];
+  const different: string[] = [];
+  const same: string[] = [];
+
+  // Check Keyway secrets
+  for (const [key, value] of keywaySecretsMap) {
+    const providerValue = providerSecretsMap.get(key);
+    if (providerValue === undefined) {
+      onlyInKeyway.push(key);
+    } else if (providerValue !== value) {
+      different.push(key);
+    } else {
+      same.push(key);
+    }
+  }
+
+  // Check provider secrets not in Keyway
+  for (const key of providerSecretsMap.keys()) {
+    if (!keywaySecretsMap.has(key)) {
+      onlyInProvider.push(key);
+    }
+  }
+
+  return {
+    keywayCount: keywaySecretsMap.size,
+    providerCount: providerSecretsMap.size,
+    onlyInKeyway,
+    onlyInProvider,
+    different,
+    same,
+  };
+}
+
+/**
  * Get sync preview (what would change)
  * Requires userId for ownership validation
  */

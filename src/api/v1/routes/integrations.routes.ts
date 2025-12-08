@@ -14,6 +14,7 @@ import {
   deleteConnection,
   listProviderProjects,
   getSyncStatus,
+  getSyncDiff,
   getSyncPreview,
   executeSync,
   getConnectionToken,
@@ -65,6 +66,13 @@ const SyncStatusQuerySchema = z.object({
   connectionId: z.string().uuid(),
   projectId: z.string(),
   environment: z.string().optional().default('production'),
+});
+
+const SyncDiffQuerySchema = z.object({
+  connectionId: z.string().uuid(),
+  projectId: z.string(),
+  keywayEnvironment: z.string().optional().default('production'),
+  providerEnvironment: z.string().optional().default('production'),
 });
 
 // Helper to build callback URL
@@ -476,6 +484,39 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
     );
 
     return sendData(reply, status, { requestId: request.id });
+  });
+
+  /**
+   * GET /vaults/:owner/:repo/sync/diff
+   * Get bi-directional diff between Keyway vault and provider
+   */
+  fastify.get('/vaults/:owner/:repo/sync/diff', {
+    preHandler: [authenticateGitHub],
+  }, async (request, reply) => {
+    const { owner, repo } = request.params as { owner: string; repo: string };
+    const query = SyncDiffQuerySchema.parse(request.query);
+
+    const vault = await verifyVaultAccess(request.githubUser!.username, owner, repo);
+
+    // Get the authenticated user for ownership validation
+    const user = await db.query.users.findFirst({
+      where: eq(users.githubId, request.githubUser!.githubId),
+    });
+
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    const diff = await getSyncDiff(
+      vault.id,
+      query.connectionId,
+      query.projectId,
+      query.keywayEnvironment,
+      query.providerEnvironment,
+      user.id
+    );
+
+    return sendData(reply, diff, { requestId: request.id });
   });
 
   /**

@@ -65,6 +65,10 @@ describe('Billing Routes', () => {
         monthly: 'price_pro_monthly',
         yearly: 'price_pro_yearly',
       },
+      team: {
+        monthly: 'price_team_monthly',
+        yearly: 'price_team_yearly',
+      },
     });
     mockGetUserSubscription.mockResolvedValue(null);
     mockCreateCheckoutSession.mockResolvedValue('https://checkout.stripe.com/session/123');
@@ -130,6 +134,22 @@ describe('Billing Routes', () => {
       expect(body).toHaveProperty('status');
       expect(body.status).toBe(503);
       expect(body.title).toBe('Service Unavailable');
+    });
+
+    it('should return Team prices when configured', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/billing/prices',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+
+      expect(body.data.prices).toHaveProperty('team');
+      expect(body.data.prices.team).toHaveProperty('monthly');
+      expect(body.data.prices.team).toHaveProperty('yearly');
+      expect(body.data.prices.team.monthly.id).toBe('price_team_monthly');
+      expect(body.data.prices.team.yearly.id).toBe('price_team_yearly');
     });
   });
 
@@ -264,6 +284,113 @@ describe('Billing Routes', () => {
       });
 
       expect(response.statusCode).toBe(503);
+    });
+
+    it('should return 400 when user has active subscription', async () => {
+      mockFindFirst.mockResolvedValue({
+        id: 'user-123',
+        githubId: 12345,
+        username: 'testuser',
+        email: 'test@example.com',
+        plan: 'pro',
+        billingStatus: 'active',
+        stripeCustomerId: 'cus_123',
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/billing/create-checkout-session',
+        headers: {
+          'content-type': 'application/json',
+        },
+        payload: {
+          priceId: 'price_team_monthly',
+          successUrl: 'https://app.keyway.sh/billing/success',
+          cancelUrl: 'https://app.keyway.sh/billing',
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.detail).toContain('already have an active subscription');
+    });
+
+    it('should return 400 when user has trialing subscription', async () => {
+      mockFindFirst.mockResolvedValue({
+        id: 'user-123',
+        githubId: 12345,
+        username: 'testuser',
+        email: 'test@example.com',
+        plan: 'pro',
+        billingStatus: 'trialing',
+        stripeCustomerId: 'cus_123',
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/billing/create-checkout-session',
+        headers: {
+          'content-type': 'application/json',
+        },
+        payload: {
+          priceId: 'price_team_monthly',
+          successUrl: 'https://app.keyway.sh/billing/success',
+          cancelUrl: 'https://app.keyway.sh/billing',
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.detail).toContain('already have an active subscription');
+    });
+
+    it('should accept Team price IDs', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/billing/create-checkout-session',
+        headers: {
+          'content-type': 'application/json',
+        },
+        payload: {
+          priceId: 'price_team_monthly',
+          successUrl: 'https://app.keyway.sh/billing/success',
+          cancelUrl: 'https://app.keyway.sh/billing',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.data.url).toBe('https://checkout.stripe.com/session/123');
+    });
+
+    it('should allow checkout for users with past_due status', async () => {
+      // past_due users might be allowed to create new subscriptions
+      // (Stripe will handle the old one)
+      mockFindFirst.mockResolvedValue({
+        id: 'user-123',
+        githubId: 12345,
+        username: 'testuser',
+        email: 'test@example.com',
+        plan: 'pro',
+        billingStatus: 'past_due',
+        stripeCustomerId: 'cus_123',
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/billing/create-checkout-session',
+        headers: {
+          'content-type': 'application/json',
+        },
+        payload: {
+          priceId: 'price_pro_monthly',
+          successUrl: 'https://app.keyway.sh/billing/success',
+          cancelUrl: 'https://app.keyway.sh/billing',
+        },
+      });
+
+      // This should succeed - past_due is not blocked
+      expect(response.statusCode).toBe(200);
     });
   });
 

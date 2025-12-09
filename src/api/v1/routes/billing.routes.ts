@@ -68,7 +68,18 @@ export async function billingRoutes(fastify: FastifyInstance) {
             interval: 'year',
           },
         },
-        // Team prices not exposed yet (Coming soon)
+        team: {
+          monthly: {
+            id: prices?.team.monthly,
+            price: 2900, // $29.00 in cents
+            interval: 'month',
+          },
+          yearly: {
+            id: prices?.team.yearly,
+            price: 29000, // $290.00 in cents
+            interval: 'year',
+          },
+        },
       },
     }, { requestId: request.id });
   });
@@ -144,8 +155,8 @@ export async function billingRoutes(fastify: FastifyInstance) {
 
     const { priceId, successUrl, cancelUrl } = parseResult.data;
 
-    // Check if user already has an active subscription
-    if (user && user.plan !== 'free' && user.billingStatus === 'active') {
+    // Check if user already has an active subscription (active or trialing)
+    if (user && user.plan !== 'free' && (user.billingStatus === 'active' || user.billingStatus === 'trialing')) {
       throw new BadRequestError('You already have an active subscription. Use the billing portal to manage it.');
     }
 
@@ -154,7 +165,8 @@ export async function billingRoutes(fastify: FastifyInstance) {
     const validPriceIds = [
       prices?.pro.monthly,
       prices?.pro.yearly,
-      // Team prices not enabled yet
+      prices?.team.monthly,
+      prices?.team.yearly,
     ].filter(Boolean);
 
     if (!validPriceIds.includes(priceId)) {

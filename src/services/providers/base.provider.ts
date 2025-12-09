@@ -14,6 +14,7 @@ export interface TokenResponse {
 export interface ProviderProject {
   id: string;
   name: string;
+  serviceId?: string; // For Railway: service ID to sync with
   serviceName?: string; // For Railway: service name (more meaningful than project name)
   linkedRepo?: string; // e.g., "owner/repo"
   framework?: string;

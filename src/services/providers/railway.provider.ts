@@ -405,35 +405,49 @@ export const railwayProvider: Provider = {
 
     const data = await railwayGraphQL<ProjectsResponse>(QUERIES.projects, {}, accessToken);
 
-    return data.projects.edges.map(({ node: p }) => {
-      // Try to find a linked GitHub repo and service name from services
-      let linkedRepo: string | undefined;
-      let serviceName: string | undefined;
-      for (const service of p.services?.edges || []) {
-        // Use the first service name as the serviceName
-        if (!serviceName) {
-          serviceName = service.node.name;
-        }
-        const repo = service.node.repoTriggers?.edges?.[0]?.node?.repository;
-        if (repo) {
-          linkedRepo = repo;
-          // If we found a linked repo, also use this service's name
-          serviceName = service.node.name;
-          break;
-        }
+    // Return one entry per service (not per project) so each linked repo is matchable
+    return data.projects.edges.flatMap(({ node: p }) => {
+      const environments = p.environments?.edges.map(e => e.node.name) || [];
+      const services = p.services?.edges || [];
+
+      // If no services, return a single project entry
+      if (services.length === 0) {
+        return [{
+          id: p.id,
+          name: p.name,
+          environments,
+          createdAt: new Date(p.createdAt),
+        }];
       }
 
-      // Extract environment names
-      const environments = p.environments?.edges.map(e => e.node.name) || [];
+      // Return one entry per service with a linked repo
+      const servicesWithRepo = services.filter(
+        s => s.node.repoTriggers?.edges?.[0]?.node?.repository
+      );
 
-      return {
+      // If no services have linked repos, return just the first service
+      if (servicesWithRepo.length === 0) {
+        const firstService = services[0].node;
+        return [{
+          id: p.id,
+          name: p.name,
+          serviceId: firstService.id,
+          serviceName: firstService.name,
+          environments,
+          createdAt: new Date(p.createdAt),
+        }];
+      }
+
+      // Return one entry per service that has a linked repo
+      return servicesWithRepo.map(s => ({
         id: p.id,
         name: p.name,
-        serviceName,
-        linkedRepo,
+        serviceId: s.node.id,
+        serviceName: s.node.name,
+        linkedRepo: s.node.repoTriggers?.edges?.[0]?.node?.repository,
         environments,
         createdAt: new Date(p.createdAt),
-      };
+      }));
     });
   },
 

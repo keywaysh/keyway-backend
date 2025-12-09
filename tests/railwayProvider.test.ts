@@ -479,6 +479,89 @@ describe('Railway Provider', () => {
       expect(projects[0].serviceName).toBe('my-service');
       expect(projects[0].linkedRepo).toBeUndefined();
     });
+
+    it('should return one entry per service when project has multiple services with different repos', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          data: {
+            projects: {
+              edges: [
+                {
+                  node: {
+                    id: 'proj-keyway',
+                    name: 'Keyway', // Single project name
+                    createdAt: '2024-01-01T00:00:00Z',
+                    environments: {
+                      edges: [
+                        { node: { id: 'env-dev', name: 'dev' } },
+                        { node: { id: 'env-prod', name: 'production' } },
+                      ]
+                    },
+                    services: {
+                      edges: [
+                        {
+                          node: {
+                            id: 'svc-backend',
+                            name: 'keyway-backend',
+                            repoTriggers: {
+                              edges: [
+                                { node: { repository: 'keywaysh/keyway-backend' } }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          node: {
+                            id: 'svc-crypto',
+                            name: 'keyway-crypto',
+                            repoTriggers: {
+                              edges: [
+                                { node: { repository: 'keywaysh/keyway-crypto' } }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          node: {
+                            id: 'svc-postgres',
+                            name: 'Postgres',
+                            repoTriggers: { edges: [] } // No linked repo
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }),
+      });
+
+      const { railwayProvider } = await import('../src/services/providers/railway.provider');
+
+      const projects = await railwayProvider.listProjects('access-token');
+
+      // Should return 2 entries (only services with linked repos)
+      expect(projects).toHaveLength(2);
+
+      // First entry: keyway-backend
+      expect(projects[0].id).toBe('proj-keyway');
+      expect(projects[0].name).toBe('Keyway');
+      expect(projects[0].serviceId).toBe('svc-backend');
+      expect(projects[0].serviceName).toBe('keyway-backend');
+      expect(projects[0].linkedRepo).toBe('keywaysh/keyway-backend');
+      expect(projects[0].environments).toEqual(['dev', 'production']);
+
+      // Second entry: keyway-crypto
+      expect(projects[1].id).toBe('proj-keyway');
+      expect(projects[1].name).toBe('Keyway');
+      expect(projects[1].serviceId).toBe('svc-crypto');
+      expect(projects[1].serviceName).toBe('keyway-crypto');
+      expect(projects[1].linkedRepo).toBe('keywaysh/keyway-crypto');
+      expect(projects[1].environments).toEqual(['dev', 'production']);
+    });
   });
 
   describe('listEnvVars', () => {

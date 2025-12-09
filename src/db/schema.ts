@@ -36,6 +36,9 @@ export const activityActionEnum = pgEnum('activity_action', [
   'secret_deleted',
   'secret_rotated',
   'secret_value_accessed',
+  'secret_trashed',
+  'secret_restored',
+  'secret_permanently_deleted',
   'permission_changed',
   'environment_created',
   'environment_renamed',
@@ -145,6 +148,8 @@ export const secrets = pgTable('secrets', {
   encryptionVersion: integer('encryption_version').notNull().default(1),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  // Soft-delete: null = active, set = trashed (auto-purged after 30 days)
+  deletedAt: timestamp('deleted_at'),
 });
 
 export const deviceCodes = pgTable('device_codes', {

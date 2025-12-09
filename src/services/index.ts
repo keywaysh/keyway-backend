@@ -14,14 +14,22 @@ export {
   getSecretsCount,
   upsertSecret,
   updateSecret,
-  deleteSecret,
   getSecretById,
   secretExists,
   getSecretValue,
   generatePreview,
+  // Trash operations
+  trashSecret,
+  permanentlyDeleteSecret,
+  getTrashedSecrets,
+  getTrashedSecretsCount,
+  restoreSecret,
+  emptyTrash,
+  purgeExpiredTrash,
   type SecretListItem,
   type CreateSecretInput,
   type UpdateSecretInput,
+  type TrashedSecretItem,
 } from './secret.service';
 
 // Activity service

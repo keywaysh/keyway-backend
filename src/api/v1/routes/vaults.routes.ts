@@ -16,7 +16,6 @@ import {
   getSecretsCount,
   upsertSecret,
   updateSecret,
-  deleteSecret,
   secretExists,
   getSecretValue,
   logActivity,
@@ -26,6 +25,13 @@ import {
   computeUserUsage,
   canWriteToVault,
   getPrivateVaultAccess,
+  // Trash operations
+  trashSecret,
+  getTrashedSecrets,
+  getTrashedSecretsCount,
+  restoreSecret,
+  permanentlyDeleteSecret,
+  emptyTrash,
 } from '../../../services';
 import { getRepoInfoWithApp, getRepoCollaboratorsWithApp, getUserRoleWithApp } from '../../../utils/github';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
@@ -489,7 +495,8 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
 
   /**
    * DELETE /:owner/:repo/secrets/:secretId
-   * Delete a secret
+   * Move a secret to trash (soft-delete)
+   * Returns info for toast with undo capability
    */
   fastify.delete('/:owner/:repo/secrets/:secretId', {
     preHandler: [authenticateGitHub],
@@ -526,8 +533,9 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       throw new PlanLimitError(writeCheck.reason!);
     }
 
-    const deletedSecret = await deleteSecret(params.secretId, vault.id);
-    if (!deletedSecret) {
+    // Soft-delete: move to trash
+    const trashedSecret = await trashSecret(params.secretId, vault.id);
+    if (!trashedSecret) {
       throw new NotFoundError('Secret not found');
     }
 
@@ -535,14 +543,27 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
 
     await logActivity({
       userId: user.id,
-      action: 'secret_deleted',
+      action: 'secret_trashed',
       platform: detectPlatform(request),
       vaultId: vault.id,
-      metadata: { key: deletedSecret.key, environment: deletedSecret.environment, repoFullName: vault.repoFullName },
+      metadata: {
+        key: trashedSecret.key,
+        environment: trashedSecret.environment,
+        repoFullName: vault.repoFullName,
+        expiresAt: trashedSecret.expiresAt.toISOString(),
+      },
       ...extractRequestInfo(request),
     });
 
-    return sendNoContent(reply);
+    // Return info for toast/undo (not 204)
+    return sendData(reply, {
+      id: params.secretId,
+      key: trashedSecret.key,
+      environment: trashedSecret.environment,
+      deletedAt: trashedSecret.deletedAt.toISOString(),
+      expiresAt: trashedSecret.expiresAt.toISOString(),
+      message: 'Secret moved to trash',
+    }, { requestId: request.id });
   });
 
   /**
@@ -606,6 +627,237 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     return sendData(reply, {
       value: secretData.value,
       preview: secretData.preview,
+    }, { requestId: request.id });
+  });
+
+  // ============================================
+  // Trash routes (soft-deleted secrets)
+  // ============================================
+
+  /**
+   * GET /:owner/:repo/trash
+   * List trashed secrets for a vault
+   */
+  fastify.get('/:owner/:repo/trash', {
+    preHandler: [authenticateGitHub],
+  }, async (request, reply) => {
+    const params = request.params as { owner: string; repo: string };
+    const repoFullName = `${params.owner}/${params.repo}`;
+    const githubUser = request.githubUser!;
+    const pagination = parsePagination(request.query);
+
+    const vault = await getVaultByRepoInternal(repoFullName);
+    if (!vault) {
+      throw new NotFoundError('Vault not found');
+    }
+
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    if (!role) {
+      throw new ForbiddenError('You do not have access to this vault');
+    }
+
+    const [totalCount, trashedSecrets] = await Promise.all([
+      getTrashedSecretsCount(vault.id),
+      getTrashedSecrets(vault.id, {
+        limit: pagination.limit,
+        offset: pagination.offset,
+      }),
+    ]);
+
+    return sendPaginatedData(
+      reply,
+      trashedSecrets,
+      buildPaginationMeta(pagination, totalCount, trashedSecrets.length),
+      { requestId: request.id }
+    );
+  });
+
+  /**
+   * POST /:owner/:repo/trash/:secretId/restore
+   * Restore a secret from trash
+   */
+  fastify.post('/:owner/:repo/trash/:secretId/restore', {
+    preHandler: [authenticateGitHub],
+  }, async (request, reply) => {
+    const params = request.params as { owner: string; repo: string; secretId: string };
+    const repoFullName = `${params.owner}/${params.repo}`;
+    const githubUser = request.githubUser!;
+
+    const vault = await getVaultByRepoInternal(repoFullName);
+    if (!vault) {
+      throw new NotFoundError('Vault not found');
+    }
+
+    // Check GitHub write permission
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    if (!role) {
+      throw new ForbiddenError('You do not have access to this vault');
+    }
+    const canWriteGitHub = ['write', 'maintain', 'admin'].includes(role);
+    if (!canWriteGitHub) {
+      throw new ForbiddenError('You need write access to this repository to restore secrets');
+    }
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.githubId, githubUser.githubId),
+    });
+    if (!user) {
+      throw new ForbiddenError('User not found in database');
+    }
+
+    // Check plan limit for write access
+    const writeCheck = await canWriteToVault(user.id, user.plan, vault.id, vault.isPrivate);
+    if (!writeCheck.allowed) {
+      throw new PlanLimitError(writeCheck.reason!);
+    }
+
+    try {
+      const restoredSecret = await restoreSecret(params.secretId, vault.id);
+      if (!restoredSecret) {
+        throw new NotFoundError('Secret not found in trash');
+      }
+
+      await touchVault(vault.id);
+
+      await logActivity({
+        userId: user.id,
+        action: 'secret_restored',
+        platform: detectPlatform(request),
+        vaultId: vault.id,
+        metadata: {
+          key: restoredSecret.key,
+          environment: restoredSecret.environment,
+          repoFullName: vault.repoFullName,
+        },
+        ...extractRequestInfo(request),
+      });
+
+      return sendData(reply, {
+        id: restoredSecret.id,
+        key: restoredSecret.key,
+        environment: restoredSecret.environment,
+        message: 'Secret restored from trash',
+      }, { requestId: request.id });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('already exists')) {
+        throw new ConflictError(error.message);
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * DELETE /:owner/:repo/trash/:secretId
+   * Permanently delete a secret from trash
+   */
+  fastify.delete('/:owner/:repo/trash/:secretId', {
+    preHandler: [authenticateGitHub],
+  }, async (request, reply) => {
+    const params = request.params as { owner: string; repo: string; secretId: string };
+    const repoFullName = `${params.owner}/${params.repo}`;
+    const githubUser = request.githubUser!;
+
+    const vault = await getVaultByRepoInternal(repoFullName);
+    if (!vault) {
+      throw new NotFoundError('Vault not found');
+    }
+
+    // Check GitHub write permission
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    if (!role) {
+      throw new ForbiddenError('You do not have access to this vault');
+    }
+    const canWriteGitHub = ['write', 'maintain', 'admin'].includes(role);
+    if (!canWriteGitHub) {
+      throw new ForbiddenError('You need write access to this repository to permanently delete secrets');
+    }
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.githubId, githubUser.githubId),
+    });
+    if (!user) {
+      throw new ForbiddenError('User not found in database');
+    }
+
+    const deletedSecret = await permanentlyDeleteSecret(params.secretId, vault.id);
+    if (!deletedSecret) {
+      throw new NotFoundError('Secret not found in trash');
+    }
+
+    await touchVault(vault.id);
+
+    await logActivity({
+      userId: user.id,
+      action: 'secret_permanently_deleted',
+      platform: detectPlatform(request),
+      vaultId: vault.id,
+      metadata: {
+        key: deletedSecret.key,
+        environment: deletedSecret.environment,
+        repoFullName: vault.repoFullName,
+      },
+      ...extractRequestInfo(request),
+    });
+
+    return sendNoContent(reply);
+  });
+
+  /**
+   * DELETE /:owner/:repo/trash
+   * Empty all trash for a vault (permanently delete all trashed secrets)
+   */
+  fastify.delete('/:owner/:repo/trash', {
+    preHandler: [authenticateGitHub],
+  }, async (request, reply) => {
+    const params = request.params as { owner: string; repo: string };
+    const repoFullName = `${params.owner}/${params.repo}`;
+    const githubUser = request.githubUser!;
+
+    const vault = await getVaultByRepoInternal(repoFullName);
+    if (!vault) {
+      throw new NotFoundError('Vault not found');
+    }
+
+    // Check GitHub write permission
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    if (!role) {
+      throw new ForbiddenError('You do not have access to this vault');
+    }
+    const canWriteGitHub = ['write', 'maintain', 'admin'].includes(role);
+    if (!canWriteGitHub) {
+      throw new ForbiddenError('You need write access to this repository to empty trash');
+    }
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.githubId, githubUser.githubId),
+    });
+    if (!user) {
+      throw new ForbiddenError('User not found in database');
+    }
+
+    const result = await emptyTrash(vault.id);
+
+    if (result.deleted > 0) {
+      await touchVault(vault.id);
+
+      await logActivity({
+        userId: user.id,
+        action: 'secret_permanently_deleted',
+        platform: detectPlatform(request),
+        vaultId: vault.id,
+        metadata: {
+          count: result.deleted,
+          keys: result.keys,
+          repoFullName: vault.repoFullName,
+          bulk: true,
+        },
+        ...extractRequestInfo(request),
+      });
+    }
+
+    return sendData(reply, {
+      deleted: result.deleted,
+      message: result.deleted > 0 ? `Permanently deleted ${result.deleted} secret(s)` : 'Trash is already empty',
     }, { requestId: request.id });
   });
 

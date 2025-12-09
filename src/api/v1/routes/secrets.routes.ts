@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authenticateGitHub, requireEnvironmentAccess } from '../../../middleware/auth';
 import { db, users, vaults, secrets } from '../../../db';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, isNull } from 'drizzle-orm';
 import { getEncryptionService, sanitizeForLogging } from '../../../utils/encryption';
 import { sendData, NotFoundError, BadRequestError, PlanLimitError } from '../../../lib';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
@@ -141,11 +141,12 @@ export async function secretsRoutes(fastify: FastifyInstance) {
       secretCount: secretEntries.length,
     }, 'Pushing secrets via v1 API');
 
-    // Get existing secrets for this environment
+    // Get existing secrets for this environment (active only, excludes trash)
     const existingSecrets = await db.query.secrets.findMany({
       where: and(
         eq(secrets.vaultId, vault.id),
-        eq(secrets.environment, body.environment)
+        eq(secrets.environment, body.environment),
+        isNull(secrets.deletedAt)
       ),
     });
 
@@ -253,11 +254,12 @@ export async function secretsRoutes(fastify: FastifyInstance) {
       throw new NotFoundError('Vault not found');
     }
 
-    // Fetch secrets with optional pagination
+    // Fetch secrets with optional pagination (active only, excludes trash)
     const queryOptions: any = {
       where: and(
         eq(secrets.vaultId, vault.id),
-        eq(secrets.environment, environment)
+        eq(secrets.environment, environment),
+        isNull(secrets.deletedAt)
       ),
     };
 

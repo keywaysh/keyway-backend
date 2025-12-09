@@ -3,7 +3,7 @@
  * Handles provider connections and sync operations
  */
 
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 import { db, providerConnections, vaultSyncs, syncLogs, secrets, vaults } from '../db';
 import { getProvider } from './providers';
 import { getEncryptionService, type EncryptedData } from '../utils/encryption';
@@ -353,11 +353,12 @@ export async function getSyncStatus(
         eq(vaultSyncs.providerProjectId, projectId)
       ),
     }),
-    // Check if vault has secrets
+    // Check if vault has secrets (active only, excludes trash)
     db.query.secrets.findMany({
       where: and(
         eq(secrets.vaultId, vaultId),
-        eq(secrets.environment, environment)
+        eq(secrets.environment, environment),
+        isNull(secrets.deletedAt)
       ),
     }),
     // Get connection for provider access (with ownership validation)
@@ -437,11 +438,12 @@ export async function getSyncDiff(
 
   const accessToken = await getValidAccessToken(connection);
 
-  // Get Keyway secrets
+  // Get Keyway secrets (active only, excludes trash)
   const keywaySecrets = await db.query.secrets.findMany({
     where: and(
       eq(secrets.vaultId, vaultId),
-      eq(secrets.environment, keywayEnvironment)
+      eq(secrets.environment, keywayEnvironment),
+      isNull(secrets.deletedAt)
     ),
   });
 
@@ -535,11 +537,12 @@ export async function getSyncPreview(
 
   const accessToken = await getValidAccessToken(connection);
 
-  // Get Keyway secrets
+  // Get Keyway secrets (active only, excludes trash)
   const keywaySecrets = await db.query.secrets.findMany({
     where: and(
       eq(secrets.vaultId, vaultId),
-      eq(secrets.environment, keywayEnvironment)
+      eq(secrets.environment, keywayEnvironment),
+      isNull(secrets.deletedAt)
     ),
   });
 
@@ -784,11 +787,12 @@ async function executePush(
 ): Promise<SyncResult> {
   if (!provider) throw new Error('Provider not found');
 
-  // Get Keyway secrets
+  // Get Keyway secrets (active only, excludes trash)
   const keywaySecrets = await db.query.secrets.findMany({
     where: and(
       eq(secrets.vaultId, vaultId),
-      eq(secrets.environment, keywayEnvironment)
+      eq(secrets.environment, keywayEnvironment),
+      isNull(secrets.deletedAt)
     ),
   });
 
@@ -875,11 +879,12 @@ async function executePull(
     teamId
   );
 
-  // Get existing Keyway secrets
+  // Get existing Keyway secrets (active only, excludes trash)
   const existingSecrets = await db.query.secrets.findMany({
     where: and(
       eq(secrets.vaultId, vaultId),
-      eq(secrets.environment, keywayEnvironment)
+      eq(secrets.environment, keywayEnvironment),
+      isNull(secrets.deletedAt)
     ),
   });
 

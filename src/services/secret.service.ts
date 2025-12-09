@@ -1,6 +1,9 @@
 import { db, secrets } from '../db';
-import { eq, and, desc, count } from 'drizzle-orm';
+import { eq, and, desc, count, isNull, isNotNull, lt } from 'drizzle-orm';
 import { getEncryptionService } from '../utils/encryption';
+
+// Trash retention period in days
+const TRASH_RETENTION_DAYS = 30;
 
 export interface SecretListItem {
   id: string;
@@ -23,14 +26,14 @@ export interface UpdateSecretInput {
 }
 
 /**
- * Get all secrets for a vault (with optional pagination)
+ * Get all active secrets for a vault (excludes trashed)
  */
 export async function getSecretsForVault(
   vaultId: string,
   options?: { limit?: number; offset?: number }
 ): Promise<SecretListItem[]> {
   const queryOptions: any = {
-    where: eq(secrets.vaultId, vaultId),
+    where: and(eq(secrets.vaultId, vaultId), isNull(secrets.deletedAt)),
     orderBy: [desc(secrets.updatedAt)],
   };
 
@@ -61,12 +64,13 @@ export async function upsertSecret(
   const encryptionService = await getEncryptionService();
   const encryptedData = await encryptionService.encrypt(input.value);
 
-  // Check if secret already exists for this key+environment
+  // Check if active secret already exists for this key+environment (excludes trashed)
   const existingSecret = await db.query.secrets.findFirst({
     where: and(
       eq(secrets.vaultId, input.vaultId),
       eq(secrets.key, input.key),
-      eq(secrets.environment, input.environment)
+      eq(secrets.environment, input.environment),
+      isNull(secrets.deletedAt)
     ),
   });
 
@@ -102,16 +106,16 @@ export async function upsertSecret(
 }
 
 /**
- * Update a secret by ID
+ * Update a secret by ID (only active secrets)
  */
 export async function updateSecret(
   secretId: string,
   vaultId: string,
   input: UpdateSecretInput
 ): Promise<SecretListItem | null> {
-  // Get existing secret
+  // Get existing active secret
   const secret = await db.query.secrets.findFirst({
-    where: and(eq(secrets.id, secretId), eq(secrets.vaultId, vaultId)),
+    where: and(eq(secrets.id, secretId), eq(secrets.vaultId, vaultId), isNull(secrets.deletedAt)),
   });
 
   if (!secret) {
@@ -162,15 +166,44 @@ export async function updateSecret(
 }
 
 /**
- * Delete a secret by ID
+ * Soft-delete a secret (move to trash)
+ * Returns info for undo/activity logging
  */
-export async function deleteSecret(
+export async function trashSecret(
+  secretId: string,
+  vaultId: string
+): Promise<{ key: string; environment: string; deletedAt: Date; expiresAt: Date } | null> {
+  // Get active secret
+  const secret = await db.query.secrets.findFirst({
+    where: and(eq(secrets.id, secretId), eq(secrets.vaultId, vaultId), isNull(secrets.deletedAt)),
+  });
+
+  if (!secret) {
+    return null;
+  }
+
+  const deletedAt = new Date();
+  const expiresAt = new Date(deletedAt.getTime() + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+  await db
+    .update(secrets)
+    .set({ deletedAt })
+    .where(eq(secrets.id, secretId));
+
+  return { key: secret.key, environment: secret.environment, deletedAt, expiresAt };
+}
+
+/**
+ * Permanently delete a secret (hard delete)
+ * Used for permanent deletion from trash
+ */
+export async function permanentlyDeleteSecret(
   secretId: string,
   vaultId: string
 ): Promise<{ key: string; environment: string } | null> {
-  // Get secret first for return value
+  // Get trashed secret
   const secret = await db.query.secrets.findFirst({
-    where: and(eq(secrets.id, secretId), eq(secrets.vaultId, vaultId)),
+    where: and(eq(secrets.id, secretId), eq(secrets.vaultId, vaultId), isNotNull(secrets.deletedAt)),
   });
 
   if (!secret) {
@@ -183,14 +216,14 @@ export async function deleteSecret(
 }
 
 /**
- * Get a single secret by ID
+ * Get a single active secret by ID
  */
 export async function getSecretById(
   secretId: string,
   vaultId: string
 ): Promise<SecretListItem | null> {
   const secret = await db.query.secrets.findFirst({
-    where: and(eq(secrets.id, secretId), eq(secrets.vaultId, vaultId)),
+    where: and(eq(secrets.id, secretId), eq(secrets.vaultId, vaultId), isNull(secrets.deletedAt)),
   });
 
   if (!secret) return null;
@@ -205,19 +238,19 @@ export async function getSecretById(
 }
 
 /**
- * Get total count of secrets for a vault
+ * Get total count of active secrets for a vault (excludes trashed)
  */
 export async function getSecretsCount(vaultId: string): Promise<number> {
   const result = await db
     .select({ count: count() })
     .from(secrets)
-    .where(eq(secrets.vaultId, vaultId));
+    .where(and(eq(secrets.vaultId, vaultId), isNull(secrets.deletedAt)));
 
   return result[0]?.count ?? 0;
 }
 
 /**
- * Check if a secret exists by key+environment (for limit checking before upsert)
+ * Check if an active secret exists by key+environment (for limit checking before upsert)
  */
 export async function secretExists(
   vaultId: string,
@@ -228,7 +261,8 @@ export async function secretExists(
     where: and(
       eq(secrets.vaultId, vaultId),
       eq(secrets.key, key),
-      eq(secrets.environment, environment)
+      eq(secrets.environment, environment),
+      isNull(secrets.deletedAt)
     ),
   });
   return !!existing;
@@ -245,7 +279,7 @@ export function generatePreview(value: string): string {
 }
 
 /**
- * Get a secret's decrypted value and preview by ID
+ * Get an active secret's decrypted value and preview by ID
  * Used for secure reveal feature in dashboard
  */
 export async function getSecretValue(
@@ -253,7 +287,7 @@ export async function getSecretValue(
   vaultId: string
 ): Promise<{ value: string; preview: string; key: string; environment: string } | null> {
   const secret = await db.query.secrets.findFirst({
-    where: and(eq(secrets.id, secretId), eq(secrets.vaultId, vaultId)),
+    where: and(eq(secrets.id, secretId), eq(secrets.vaultId, vaultId), isNull(secrets.deletedAt)),
   });
 
   if (!secret) return null;
@@ -272,4 +306,145 @@ export async function getSecretValue(
     key: secret.key,
     environment: secret.environment,
   };
+}
+
+// ============================================
+// Trash operations
+// ============================================
+
+export interface TrashedSecretItem {
+  id: string;
+  key: string;
+  environment: string;
+  deletedAt: string;
+  expiresAt: string;
+  daysRemaining: number;
+}
+
+/**
+ * Get all trashed secrets for a vault
+ */
+export async function getTrashedSecrets(
+  vaultId: string,
+  options?: { limit?: number; offset?: number }
+): Promise<TrashedSecretItem[]> {
+  const queryOptions: any = {
+    where: and(eq(secrets.vaultId, vaultId), isNotNull(secrets.deletedAt)),
+    orderBy: [desc(secrets.deletedAt)],
+  };
+
+  if (options?.limit !== undefined) {
+    queryOptions.limit = options.limit;
+  }
+  if (options?.offset !== undefined) {
+    queryOptions.offset = options.offset;
+  }
+
+  const trashedSecrets = await db.query.secrets.findMany(queryOptions);
+
+  return trashedSecrets.map((secret) => {
+    const deletedAt = secret.deletedAt!;
+    const expiresAt = new Date(deletedAt.getTime() + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const daysRemaining = Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
+
+    return {
+      id: secret.id,
+      key: secret.key,
+      environment: secret.environment,
+      deletedAt: deletedAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      daysRemaining,
+    };
+  });
+}
+
+/**
+ * Get count of trashed secrets for a vault
+ */
+export async function getTrashedSecretsCount(vaultId: string): Promise<number> {
+  const result = await db
+    .select({ count: count() })
+    .from(secrets)
+    .where(and(eq(secrets.vaultId, vaultId), isNotNull(secrets.deletedAt)));
+
+  return result[0]?.count ?? 0;
+}
+
+/**
+ * Restore a secret from trash
+ * Returns null if secret not found or not in trash
+ * Throws error if key+environment already exists
+ */
+export async function restoreSecret(
+  secretId: string,
+  vaultId: string
+): Promise<{ id: string; key: string; environment: string } | null> {
+  // Get trashed secret
+  const secret = await db.query.secrets.findFirst({
+    where: and(eq(secrets.id, secretId), eq(secrets.vaultId, vaultId), isNotNull(secrets.deletedAt)),
+  });
+
+  if (!secret) {
+    return null;
+  }
+
+  // Check if key+environment already exists (conflict)
+  const existingActive = await db.query.secrets.findFirst({
+    where: and(
+      eq(secrets.vaultId, vaultId),
+      eq(secrets.key, secret.key),
+      eq(secrets.environment, secret.environment),
+      isNull(secrets.deletedAt)
+    ),
+  });
+
+  if (existingActive) {
+    throw new Error(`Secret "${secret.key}" already exists in ${secret.environment}`);
+  }
+
+  // Restore by clearing deletedAt
+  await db
+    .update(secrets)
+    .set({ deletedAt: null, updatedAt: new Date() })
+    .where(eq(secrets.id, secretId));
+
+  return { id: secret.id, key: secret.key, environment: secret.environment };
+}
+
+/**
+ * Empty all trash for a vault (permanent delete all trashed secrets)
+ */
+export async function emptyTrash(vaultId: string): Promise<{ deleted: number; keys: string[] }> {
+  // Get all trashed secrets first for return value
+  const trashed = await db.query.secrets.findMany({
+    where: and(eq(secrets.vaultId, vaultId), isNotNull(secrets.deletedAt)),
+  });
+
+  if (trashed.length === 0) {
+    return { deleted: 0, keys: [] };
+  }
+
+  await db
+    .delete(secrets)
+    .where(and(eq(secrets.vaultId, vaultId), isNotNull(secrets.deletedAt)));
+
+  return {
+    deleted: trashed.length,
+    keys: trashed.map((s) => s.key),
+  };
+}
+
+/**
+ * Purge expired trash (secrets deleted more than TRASH_RETENTION_DAYS ago)
+ * Used by background cron job
+ */
+export async function purgeExpiredTrash(): Promise<{ purged: number }> {
+  const expirationThreshold = new Date(Date.now() - TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+  const result = await db
+    .delete(secrets)
+    .where(and(isNotNull(secrets.deletedAt), lt(secrets.deletedAt, expirationThreshold)))
+    .returning({ id: secrets.id });
+
+  return { purged: result.length };
 }

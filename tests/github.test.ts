@@ -363,6 +363,105 @@ describe('GitHub Utils', () => {
 
       expect(result).toBe('triage');
     });
+
+    it('should call the /permission endpoint (not just /collaborators/{username})', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            owner: { login: 'someorg' },
+            permissions: { admin: false, push: false, pull: true },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            permission: 'write',
+            role_name: 'push',
+          }),
+        });
+
+      await getUserRole(accessToken, 'someorg/test-repo', 'collaborator');
+
+      // Verify the second call is to the /permission endpoint
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        2,
+        'https://api.github.com/repos/someorg/test-repo/collaborators/collaborator/permission',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: `Bearer ${accessToken}`,
+          }),
+        })
+      );
+    });
+
+    it('should handle collaborator with write access when repo API shows no push permission', async () => {
+      // This tests the key scenario: user is a collaborator but the repo API
+      // (which may use App token) doesn't show their push permission directly
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            owner: { login: 'anotheruser' },
+            permissions: { admin: false, push: false, pull: true },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            permission: 'write',
+            role_name: 'push',
+          }),
+        });
+
+      const result = await getUserRole(accessToken, 'anotheruser/repo', 'collaborator');
+
+      expect(result).toBe('write');
+    });
+
+    it('should fallback to permission field when role_name is missing', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            owner: { login: 'someorg' },
+            permissions: { admin: false, push: false, pull: true },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            permission: 'admin',
+            // role_name could be missing in some edge cases
+          }),
+        });
+
+      const result = await getUserRole(accessToken, 'someorg/repo', 'user');
+
+      expect(result).toBe('admin');
+    });
+
+    it('should return read for collaborator with pull-only permission', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            owner: { login: 'otheruser' },
+            permissions: { admin: false, push: false, pull: true },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            permission: 'read',
+            role_name: 'pull',
+          }),
+        });
+
+      const result = await getUserRole(accessToken, 'otheruser/repo', 'reader');
+
+      expect(result).toBe('read');
+    });
   });
 
   describe('getUserRoleWithApp', () => {

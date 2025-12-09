@@ -707,7 +707,7 @@ describe('Railway Provider', () => {
       }
     };
 
-    it('should create new environment variables', async () => {
+    it('should create new environment variables using bulk mutation', async () => {
       // First call: get project with environments (for setEnvVars)
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -721,18 +721,13 @@ describe('Railway Provider', () => {
       // Third call: get existing variables (empty)
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ data: { variables: [] } }),
+        json: () => Promise.resolve({ data: { variables: {} } }),
       });
-      // Fourth + Fifth calls: upsert each variable
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ data: { variableUpsert: true } }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ data: { variableUpsert: true } }),
-        });
+      // Fourth call: bulk upsert all variables in one call
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: { variableCollectionUpsert: true } }),
+      });
 
       const { railwayProvider } = await import('../src/services/providers/railway.provider');
 
@@ -742,10 +737,22 @@ describe('Railway Provider', () => {
       });
 
       expect(result.created).toBe(2);
-      expect(mockFetch).toHaveBeenCalledTimes(5); // 2 project queries + 1 listEnvVars + 2 upserts
+      expect(result.updated).toBe(0);
+      expect(result.failed).toBe(0);
+      // Should use bulk mutation: 1 project query + 1 project query for listEnvVars + 1 get vars + 1 bulk upsert
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+
+      // Verify the bulk mutation was called with skipDeploys: true
+      const bulkCallBody = JSON.parse(mockFetch.mock.calls[3][1].body);
+      expect(bulkCallBody.query).toContain('variableCollectionUpsert');
+      expect(bulkCallBody.variables.input.skipDeploys).toBe(true);
+      expect(bulkCallBody.variables.input.variables).toEqual({
+        NEW_VAR: 'value1',
+        ANOTHER_VAR: 'value2',
+      });
     });
 
-    it('should handle partial upsert failures gracefully', async () => {
+    it('should throw when bulk upsert fails', async () => {
       // First call: get project with environments (for setEnvVars)
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -759,14 +766,9 @@ describe('Railway Provider', () => {
       // Third call: get existing variables (empty)
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ data: { variables: [] } }),
+        json: () => Promise.resolve({ data: { variables: {} } }),
       });
-      // First variable succeeds
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: { variableUpsert: true } }),
-      });
-      // Second variable fails
+      // Fourth call: bulk upsert fails
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
@@ -777,18 +779,48 @@ describe('Railway Provider', () => {
 
       const { railwayProvider } = await import('../src/services/providers/railway.provider');
 
-      // When some operations succeed and some fail, it returns stats (doesn't throw)
-      const result = await railwayProvider.setEnvVars('access-token', 'proj-123', 'production', {
+      // When bulk operation fails, it throws with all keys as failed
+      await expect(railwayProvider.setEnvVars('access-token', 'proj-123', 'production', {
         VALID_VAR: 'value1',
         RAILWAY_RESERVED: 'value2',
+      })).rejects.toThrow('Failed to set 2 environment variables');
+    });
+
+    it('should correctly count created vs updated variables', async () => {
+      // First call: get project with environments
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockProjectWithEnvs),
+      });
+      // Second call: get project for listEnvVars
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockProjectWithEnvs),
+      });
+      // Third call: get existing variables (one already exists)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: { variables: { EXISTING_VAR: 'old-value' } } }),
+      });
+      // Fourth call: bulk upsert succeeds
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: { variableCollectionUpsert: true } }),
+      });
+
+      const { railwayProvider } = await import('../src/services/providers/railway.provider');
+
+      const result = await railwayProvider.setEnvVars('access-token', 'proj-123', 'production', {
+        EXISTING_VAR: 'new-value', // This is an update
+        NEW_VAR: 'value1',         // This is a create
       });
 
       expect(result.created).toBe(1);
-      expect(result.failed).toBe(1);
-      expect(result.failedKeys).toContain('RAILWAY_RESERVED');
+      expect(result.updated).toBe(1);
+      expect(result.failed).toBe(0);
     });
 
-    it('should throw when all upsert operations fail', async () => {
+    it('should trigger redeploy after bulk update when serviceId is provided', async () => {
       // First call: get project with environments (for setEnvVars)
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -802,23 +834,122 @@ describe('Railway Provider', () => {
       // Third call: get existing variables (empty)
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ data: { variables: [] } }),
+        json: () => Promise.resolve({ data: { variables: {} } }),
       });
-      // All variables fail
+      // Fourth call: bulk upsert succeeds
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: { variableCollectionUpsert: true } }),
+      });
+      // Fifth call: get latest deployment
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          data: {
+            deployments: {
+              edges: [{ node: { id: 'deploy-123', status: 'SUCCESS' } }]
+            }
+          }
+        }),
+      });
+      // Sixth call: trigger redeploy
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: { deploymentRedeploy: true } }),
+      });
+
+      const { railwayProvider } = await import('../src/services/providers/railway.provider');
+
+      // Use environment format with serviceId: "production:service-id"
+      const result = await railwayProvider.setEnvVars('access-token', 'proj-123', 'production:svc-123', {
+        NEW_VAR: 'value1',
+      });
+
+      expect(result.created).toBe(1);
+      expect(result.failed).toBe(0);
+      // Should call: 2 project queries + 1 get vars + 1 bulk upsert + 1 get deployments + 1 redeploy
+      expect(mockFetch).toHaveBeenCalledTimes(6);
+
+      // Verify redeploy was called with correct deployment ID
+      const redeployCallBody = JSON.parse(mockFetch.mock.calls[5][1].body);
+      expect(redeployCallBody.query).toContain('deploymentRedeploy');
+      expect(redeployCallBody.variables.id).toBe('deploy-123');
+    });
+
+    it('should succeed even if redeploy fails (variables were already updated)', async () => {
+      // First call: get project with environments (for setEnvVars)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockProjectWithEnvs),
+      });
+      // Second call: get project with environments (for listEnvVars)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockProjectWithEnvs),
+      });
+      // Third call: get existing variables (empty)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: { variables: {} } }),
+      });
+      // Fourth call: bulk upsert succeeds
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: { variableCollectionUpsert: true } }),
+      });
+      // Fifth call: get latest deployment fails
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
           data: null,
-          errors: [{ message: 'Variable name is reserved' }]
+          errors: [{ message: 'Deployment not found' }]
         }),
       });
 
       const { railwayProvider } = await import('../src/services/providers/railway.provider');
 
-      // When ALL operations fail, it throws
-      await expect(railwayProvider.setEnvVars('access-token', 'proj-123', 'production', {
-        RAILWAY_RESERVED: 'value',
-      })).rejects.toThrow('Failed to set all 1 environment variables');
+      // Should NOT throw - variables were updated successfully
+      const result = await railwayProvider.setEnvVars('access-token', 'proj-123', 'production:svc-123', {
+        NEW_VAR: 'value1',
+      });
+
+      expect(result.created).toBe(1);
+      expect(result.failed).toBe(0);
+    });
+
+    it('should not trigger redeploy for shared variables (no serviceId)', async () => {
+      // First call: get project with environments (for setEnvVars)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockProjectWithEnvs),
+      });
+      // Second call: get project with environments (for listEnvVars)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockProjectWithEnvs),
+      });
+      // Third call: get existing variables (empty)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: { variables: {} } }),
+      });
+      // Fourth call: bulk upsert succeeds
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: { variableCollectionUpsert: true } }),
+      });
+
+      const { railwayProvider } = await import('../src/services/providers/railway.provider');
+
+      // No serviceId means shared variables - no redeploy triggered
+      const result = await railwayProvider.setEnvVars('access-token', 'proj-123', 'production', {
+        SHARED_VAR: 'value1',
+      });
+
+      expect(result.created).toBe(1);
+      expect(result.failed).toBe(0);
+      // Should only be 4 calls (no redeploy)
+      expect(mockFetch).toHaveBeenCalledTimes(4);
     });
   });
 

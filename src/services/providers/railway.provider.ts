@@ -268,12 +268,78 @@ const MUTATIONS = {
     }
   `,
 
+  // Bulk upsert mutation - updates all variables in one call
+  // Uses skipDeploys to prevent multiple redeployments
+  upsertVariableCollection: `
+    mutation variableCollectionUpsert($input: VariableCollectionUpsertInput!) {
+      variableCollectionUpsert(input: $input)
+    }
+  `,
+
   deleteVariable: `
     mutation($input: VariableDeleteInput!) {
       variableDelete(input: $input)
     }
   `,
+
+  // Manual redeploy after bulk variable update
+  redeployDeployment: `
+    mutation deploymentRedeploy($id: String!) {
+      deploymentRedeploy(id: $id)
+    }
+  `,
+
+  // Get latest deployment for service
+  getLatestDeployment: `
+    query($serviceId: String!, $environmentId: String!) {
+      deployments(
+        input: { serviceId: $serviceId, environmentId: $environmentId }
+        first: 1
+      ) {
+        edges {
+          node {
+            id
+            status
+          }
+        }
+      }
+    }
+  `,
 };
+
+// Helper to trigger a single redeploy after bulk variable update
+async function triggerRailwayRedeploy(accessToken: string, serviceId: string, environmentId: string): Promise<void> {
+  interface DeploymentsResponse {
+    deployments: {
+      edges: Array<{
+        node: {
+          id: string;
+          status: string;
+        };
+      }>;
+    };
+  }
+
+  // Get the latest deployment for this service/environment
+  const deploymentsData = await railwayGraphQL<DeploymentsResponse>(
+    MUTATIONS.getLatestDeployment,
+    { serviceId, environmentId },
+    accessToken
+  );
+
+  const latestDeployment = deploymentsData.deployments.edges[0]?.node;
+  if (!latestDeployment) {
+    // No deployment to redeploy - this is fine, next deploy will pick up the vars
+    return;
+  }
+
+  // Trigger redeploy
+  await railwayGraphQL(
+    MUTATIONS.redeployDeployment,
+    { id: latestDeployment.id },
+    accessToken
+  );
+}
 
 export const railwayProvider: Provider = {
   name: 'railway',
@@ -637,53 +703,63 @@ export const railwayProvider: Provider = {
 
     const environmentId = envNode.node.id;
 
-    // Get existing variables to determine create vs update
+    // Get existing variables to determine create vs update counts
     const existingVars = await this.listEnvVars(accessToken, projectId, environment);
     const existingKeys = new Set(existingVars.map(v => v.key));
 
+    // Count creates vs updates
     let created = 0;
     let updated = 0;
-    let failed = 0;
-    const failedKeys: string[] = [];
-
-    for (const [key, value] of Object.entries(vars)) {
-      try {
-        const input: Record<string, string> = {
-          projectId,
-          environmentId,
-          name: key,
-          value,
-        };
-
-        if (serviceId) {
-          input.serviceId = serviceId;
-        }
-
-        await railwayGraphQL(MUTATIONS.upsertVariable, { input }, accessToken);
-
-        if (existingKeys.has(key)) {
-          updated++;
-        } else {
-          created++;
-        }
-      } catch (error) {
-        failed++;
-        failedKeys.push(key);
-        logger.error(
-          { key, projectId, environment, error: error instanceof Error ? error.message : 'Unknown error' },
-          'Failed to set env var'
-        );
+    for (const key of Object.keys(vars)) {
+      if (existingKeys.has(key)) {
+        updated++;
+      } else {
+        created++;
       }
     }
 
-    if (failed > 0 && created === 0 && updated === 0) {
+    try {
+      // Use bulk mutation with skipDeploys to prevent multiple redeployments
+      // This updates all variables in a single API call
+      const input: Record<string, unknown> = {
+        projectId,
+        environmentId,
+        variables: vars,
+        skipDeploys: true, // Critical: prevents auto-redeploy for each variable
+      };
+
+      if (serviceId) {
+        input.serviceId = serviceId;
+      }
+
+      await railwayGraphQL(MUTATIONS.upsertVariableCollection, { input }, accessToken);
+
+      // After bulk update, trigger a single redeploy if we have a serviceId
+      if (serviceId) {
+        try {
+          await triggerRailwayRedeploy(accessToken, serviceId, environmentId);
+        } catch (redeployError) {
+          // Log but don't fail - variables were updated successfully
+          logger.warn(
+            { serviceId, environmentId, error: redeployError instanceof Error ? redeployError.message : 'Unknown error' },
+            'Failed to trigger redeploy after variable update'
+          );
+        }
+      }
+
+      return { created, updated, failed: 0, failedKeys: [] };
+    } catch (error) {
+      // If bulk update fails, all variables failed
+      const failedKeys = Object.keys(vars);
+      logger.error(
+        { projectId, environment, error: error instanceof Error ? error.message : 'Unknown error' },
+        'Failed to bulk update env vars'
+      );
       throw new RailwayProviderError(
-        `Failed to set all ${failed} environment variables`,
-        'all_operations_failed'
+        `Failed to set ${failedKeys.length} environment variables: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'bulk_update_failed'
       );
     }
-
-    return { created, updated, failed, failedKeys };
   },
 
   async deleteEnvVar(

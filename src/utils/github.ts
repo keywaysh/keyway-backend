@@ -354,9 +354,10 @@ export async function getUserRole(
       }
     }
 
-    // Try to get detailed collaborator role (for orgs and invited collaborators)
+    // Try to get detailed collaborator role using the permission endpoint
+    // This returns the actual permission level, not just 204/404
     const collabResponse = await fetch(
-      `${GITHUB_API_BASE}/repos/${owner}/${repo}/collaborators/${username}`,
+      `${GITHUB_API_BASE}/repos/${owner}/${repo}/collaborators/${username}/permission`,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -366,7 +367,7 @@ export async function getUserRole(
     );
 
     if (collabResponse.ok) {
-      const data = (await collabResponse.json()) as GitHubCollaborator;
+      const data = (await collabResponse.json()) as { permission: string; role_name: string };
 
       // Map GitHub's role_name to our CollaboratorRole type
       const roleMap: Record<string, CollaboratorRole> = {
@@ -377,11 +378,13 @@ export async function getUserRole(
         admin: 'admin',
       };
 
-      const role = roleMap[data.role_name] || null;
-      console.log(`[GitHub] Got role from collaborator API: role_name=${data.role_name} -> role=${role}`);
+      // Use role_name for more accurate role, fallback to permission
+      const role = roleMap[data.role_name] || roleMap[data.permission] || null;
+      console.log(`[GitHub] Got role from collaborator permission API: role_name=${data.role_name}, permission=${data.permission} -> role=${role}`);
       return role;
     } else {
-      console.log(`[GitHub] Collaborator API failed: status=${collabResponse.status}, falling back to permissions`);
+      const errorBody = await collabResponse.text();
+      console.log(`[GitHub] Collaborator permission API failed: status=${collabResponse.status}, body=${errorBody.substring(0, 200)}`);
     }
 
     // Fall back to basic permissions if collaborator API doesn't work

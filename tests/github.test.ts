@@ -293,6 +293,7 @@ describe('GitHub Utils', () => {
         .mockResolvedValueOnce({
           ok: false,
           status: 404,
+          text: async () => 'Not Found',
         });
 
       const result = await getUserRole(accessToken, 'someorg/test-repo', 'reader');

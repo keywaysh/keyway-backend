@@ -17,7 +17,7 @@ describe('Plan Configuration', () => {
         maxPrivateRepos: 1,
         maxProviders: 2,
         maxEnvironmentsPerVault: 4,
-        maxSecretsPerPrivateVault: 20,
+        maxSecretsPerPrivateVault: Infinity,
       });
     });
 
@@ -133,15 +133,10 @@ describe('Plan Limit Checks', () => {
       expect(result.allowed).toBe(true);
     });
 
-    it('should allow free plan first 20 secrets in private vault', () => {
+    it('should allow free plan unlimited secrets in private vault', () => {
       expect(canCreateSecret('free', 0, true).allowed).toBe(true);
-      expect(canCreateSecret('free', 19, true).allowed).toBe(true);
-    });
-
-    it('should reject free plan 21st secret in private vault', () => {
-      const result = canCreateSecret('free', 20, true);
-      expect(result.allowed).toBe(false);
-      expect(result.reason).toContain('20 secrets');
+      expect(canCreateSecret('free', 100, true).allowed).toBe(true);
+      expect(canCreateSecret('free', 1000, true).allowed).toBe(true);
     });
 
     it('should allow pro plan unlimited secrets in private vault', () => {

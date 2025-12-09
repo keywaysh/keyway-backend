@@ -19,7 +19,7 @@ export interface PlanLimits {
 
 /**
  * Plan definitions
- * - free: Limited features (1 private repo, 2 providers, 4 envs, 20 secrets)
+ * - free: Limited features (1 private repo, 2 providers, 4 envs, unlimited secrets)
  * - pro: Unlimited everything
  * - team: Unlimited everything (for organizations)
  */
@@ -29,7 +29,7 @@ export const PLANS: Record<UserPlan, PlanLimits> = {
     maxPrivateRepos: 1,
     maxProviders: 2,
     maxEnvironmentsPerVault: 4,
-    maxSecretsPerPrivateVault: 20,
+    maxSecretsPerPrivateVault: Infinity,
   },
   pro: {
     maxPublicRepos: Infinity,

@@ -35,6 +35,7 @@ export const activityActionEnum = pgEnum('activity_action', [
   'secret_updated',
   'secret_deleted',
   'secret_rotated',
+  'secret_value_accessed',
   'permission_changed',
   'environment_created',
   'environment_renamed',

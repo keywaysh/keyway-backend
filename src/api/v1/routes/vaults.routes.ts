@@ -18,6 +18,7 @@ import {
   updateSecret,
   deleteSecret,
   secretExists,
+  getSecretValue,
   logActivity,
   extractRequestInfo,
   detectPlatform,
@@ -542,6 +543,70 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     });
 
     return sendNoContent(reply);
+  });
+
+  /**
+   * GET /:owner/:repo/secrets/:secretId/value
+   * Get the decrypted value and preview of a secret
+   * Used for secure reveal/copy functionality in dashboard
+   *
+   * Rate limited to 10 requests per minute to prevent enumeration attacks
+   */
+  fastify.get('/:owner/:repo/secrets/:secretId/value', {
+    preHandler: [authenticateGitHub],
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (request, reply) => {
+    const params = request.params as { owner: string; repo: string; secretId: string };
+    const repoFullName = `${params.owner}/${params.repo}`;
+    const githubUser = request.githubUser!;
+
+    const vault = await getVaultByRepoInternal(repoFullName);
+    if (!vault) {
+      throw new NotFoundError('Vault not found');
+    }
+
+    // Check GitHub read permission
+    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    if (!role) {
+      throw new ForbiddenError('You do not have access to this vault');
+    }
+
+    // Get the secret value
+    const secretData = await getSecretValue(params.secretId, vault.id);
+    if (!secretData) {
+      throw new NotFoundError('Secret not found');
+    }
+
+    // Get user for logging
+    const user = await db.query.users.findFirst({
+      where: eq(users.githubId, githubUser.githubId),
+    });
+
+    if (user) {
+      await logActivity({
+        userId: user.id,
+        action: 'secret_value_accessed',
+        platform: detectPlatform(request),
+        vaultId: vault.id,
+        metadata: {
+          secretId: params.secretId,
+          key: secretData.key,
+          environment: secretData.environment,
+          repoFullName: vault.repoFullName,
+        },
+        ...extractRequestInfo(request),
+      });
+    }
+
+    return sendData(reply, {
+      value: secretData.value,
+      preview: secretData.preview,
+    }, { requestId: request.id });
   });
 
   // ============================================

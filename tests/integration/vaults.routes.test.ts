@@ -212,6 +212,12 @@ vi.mock('../../src/services', () => ({
   updateSecret: vi.fn().mockResolvedValue({ id: 'secret-id' }),
   deleteSecret: vi.fn().mockResolvedValue(undefined),
   secretExists: vi.fn().mockResolvedValue(false),
+  getSecretValue: vi.fn().mockResolvedValue({
+    value: 'postgres://user:password@localhost:5432/db',
+    preview: 'post••••2/db',
+    key: 'DATABASE_URL',
+    environment: 'production',
+  }),
   logActivity: vi.fn().mockResolvedValue(undefined),
   extractRequestInfo: vi.fn().mockReturnValue({ ipAddress: '127.0.0.1', userAgent: 'test' }),
   detectPlatform: vi.fn().mockReturnValue('api'),
@@ -448,6 +454,119 @@ describe('Vaults Routes', () => {
       });
 
       expect(response.statusCode).toBe(404);
+    });
+  });
+
+  describe('GET /v1/vaults/:owner/:repo/secrets/:secretId/value (Get Secret Value)', () => {
+    it('should return secret value and preview', async () => {
+      const { getUserRoleWithApp } = await import('../../src/utils/github');
+
+      // Mock user has read access
+      (getUserRoleWithApp as any).mockResolvedValue('read');
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/vaults/testuser/test-repo/secrets/secret-123/value',
+        headers: {
+          authorization: 'Bearer mock-keyway-token',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.data).toHaveProperty('value');
+      expect(body.data).toHaveProperty('preview');
+      expect(body.data.value).toBe('postgres://user:password@localhost:5432/db');
+      expect(body.data.preview).toBe('post••••2/db');
+    });
+
+    it('should require authentication', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/vaults/testuser/test-repo/secrets/secret-123/value',
+      });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('should return 403 if user has no access to vault', async () => {
+      const { getUserRoleWithApp } = await import('../../src/utils/github');
+
+      // Mock user has no role
+      (getUserRoleWithApp as any).mockResolvedValue(null);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/vaults/testuser/test-repo/secrets/secret-123/value',
+        headers: {
+          authorization: 'Bearer mock-keyway-token',
+        },
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+
+    it('should return 404 if vault not found', async () => {
+      const services = await import('../../src/services');
+
+      // Mock vault not found
+      (services.getVaultByRepoInternal as any).mockResolvedValue(null);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/vaults/unknown/repo/secrets/secret-123/value',
+        headers: {
+          authorization: 'Bearer mock-keyway-token',
+        },
+      });
+
+      expect(response.statusCode).toBe(404);
+    });
+
+    it('should return 404 if secret not found', async () => {
+      const services = await import('../../src/services');
+      const { getUserRoleWithApp } = await import('../../src/utils/github');
+
+      // Mock vault found but secret not found
+      (services.getVaultByRepoInternal as any).mockResolvedValue(mockVault);
+      (getUserRoleWithApp as any).mockResolvedValue('read');
+      (services.getSecretValue as any).mockResolvedValue(null);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/vaults/testuser/test-repo/secrets/nonexistent-secret/value',
+        headers: {
+          authorization: 'Bearer mock-keyway-token',
+        },
+      });
+
+      expect(response.statusCode).toBe(404);
+    });
+
+    it('should log activity when secret value is accessed', async () => {
+      const services = await import('../../src/services');
+      const { getUserRoleWithApp } = await import('../../src/utils/github');
+
+      // Reset mocks
+      (services.getVaultByRepoInternal as any).mockResolvedValue(mockVault);
+      (getUserRoleWithApp as any).mockResolvedValue('read');
+      (services.getSecretValue as any).mockResolvedValue({
+        value: 'test-value',
+        preview: 'test••••alue',
+        key: 'API_KEY',
+        environment: 'production',
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/vaults/testuser/test-repo/secrets/secret-123/value',
+        headers: {
+          authorization: 'Bearer mock-keyway-token',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(services.logActivity).toHaveBeenCalled();
     });
   });
 });

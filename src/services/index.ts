@@ -17,6 +17,8 @@ export {
   deleteSecret,
   getSecretById,
   secretExists,
+  getSecretValue,
+  generatePreview,
   type SecretListItem,
   type CreateSecretInput,
   type UpdateSecretInput,

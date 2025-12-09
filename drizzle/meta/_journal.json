@@ -155,6 +155,13 @@
       "when": 1764850000000,
       "tag": "0021_add_github_app_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "5",
+      "when": 1765286000000,
+      "tag": "0022_add_secret_value_accessed_action",
+      "breakpoints": true
     }
   ]
 }

@@ -233,3 +233,43 @@ export async function secretExists(
   });
   return !!existing;
 }
+
+/**
+ * Generate a preview of a secret value (first 4 + •••• + last 4 chars)
+ * Never reveals the full value - for security display purposes
+ */
+export function generatePreview(value: string): string {
+  if (value.length <= 8) return '••••••••';
+  if (value.length <= 12) return `${value.slice(0, 2)}••••${value.slice(-2)}`;
+  return `${value.slice(0, 4)}••••${value.slice(-4)}`;
+}
+
+/**
+ * Get a secret's decrypted value and preview by ID
+ * Used for secure reveal feature in dashboard
+ */
+export async function getSecretValue(
+  secretId: string,
+  vaultId: string
+): Promise<{ value: string; preview: string; key: string; environment: string } | null> {
+  const secret = await db.query.secrets.findFirst({
+    where: and(eq(secrets.id, secretId), eq(secrets.vaultId, vaultId)),
+  });
+
+  if (!secret) return null;
+
+  const encryptionService = await getEncryptionService();
+  const decryptedValue = await encryptionService.decrypt({
+    encryptedContent: secret.encryptedValue,
+    iv: secret.iv,
+    authTag: secret.authTag,
+    version: secret.encryptionVersion ?? 1,
+  });
+
+  return {
+    value: decryptedValue,
+    preview: generatePreview(decryptedValue),
+    key: secret.key,
+    environment: secret.environment,
+  };
+}

@@ -1,5 +1,7 @@
 # Keyway API
 
+[![Keyway Secrets](https://www.keyway.sh/badge.svg?repo=keywaysh/keyway-backend)](https://www.keyway.sh/vaults/keywaysh/keyway-backend)
+
 > GitHub-native secrets manager backend
 
 A simple, secure API for managing team secrets with GitHub authentication and AES-256-GCM encryption.

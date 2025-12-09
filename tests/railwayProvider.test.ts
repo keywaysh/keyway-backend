@@ -588,15 +588,15 @@ describe('Railway Provider', () => {
         ok: true,
         json: () => Promise.resolve(mockProjectWithEnvs),
       });
-      // Second call: get variables
+      // Second call: get variables (Railway returns key/value object)
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
           data: {
-            variables: [
-              { key: 'DATABASE_URL', value: 'postgres://...' },
-              { key: 'API_KEY', value: 'secret-key' },
-            ]
+            variables: {
+              'DATABASE_URL': 'postgres://...',
+              'API_KEY': 'secret-key',
+            }
           }
         }),
       });
@@ -617,14 +617,14 @@ describe('Railway Provider', () => {
         ok: true,
         json: () => Promise.resolve(mockProjectWithEnvs),
       });
-      // Second call: get service variables
+      // Second call: get service variables (Railway returns key/value object)
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
           data: {
-            variables: [
-              { key: 'PORT', value: '3000' },
-            ]
+            variables: {
+              'PORT': '3000',
+            }
           }
         }),
       });

@@ -240,23 +240,17 @@ const QUERIES = {
     }
   `,
 
-  // Get shared variables (no serviceId)
+  // Get shared variables (no serviceId) - returns key/value object directly
   sharedVariables: `
     query($projectId: String!, $environmentId: String!) {
-      variables(projectId: $projectId, environmentId: $environmentId) {
-        key
-        value
-      }
+      variables(projectId: $projectId, environmentId: $environmentId)
     }
   `,
 
-  // Get service variables (with serviceId)
+  // Get service variables (with serviceId) - returns key/value object directly
   serviceVariables: `
     query($projectId: String!, $environmentId: String!, $serviceId: String!) {
-      variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId) {
-        key
-        value
-      }
+      variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId)
     }
   `,
 };
@@ -565,11 +559,9 @@ export const railwayProvider: Provider = {
     const environmentId = envNode.node.id;
 
     // Get variables (shared or service-specific)
+    // Railway returns variables as a key/value object: {"VAR1": "value1", "VAR2": "value2"}
     interface VariablesResponse {
-      variables: Array<{
-        key: string;
-        value: string;
-      }>;
+      variables: Record<string, string>;
     }
 
     let data: VariablesResponse;
@@ -587,9 +579,10 @@ export const railwayProvider: Provider = {
       );
     }
 
-    return data.variables.map(v => ({
-      key: v.key,
-      value: v.value,
+    // Convert key/value object to array format
+    return Object.entries(data.variables || {}).map(([key, value]) => ({
+      key,
+      value,
     }));
   },
 

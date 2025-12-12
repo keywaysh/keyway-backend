@@ -260,6 +260,8 @@ vi.mock('../../src/services/secret.service', () => ({
 
   emptyTrash: vi.fn().mockResolvedValue({ deleted: 2, keys: ['KEY1', 'KEY2'] }),
 
+  trashSecretsByIds: vi.fn().mockResolvedValue(undefined),
+
   purgeExpiredTrash: vi.fn().mockResolvedValue({ purged: 1 }),
 
   generatePreview: vi.fn().mockReturnValue('test••••alue'),
@@ -336,6 +338,7 @@ vi.mock('../../src/services', () => ({
     return Promise.resolve(null);
   }),
   emptyTrash: vi.fn().mockResolvedValue({ deleted: 2, keys: ['KEY1', 'KEY2'] }),
+  trashSecretsByIds: vi.fn().mockResolvedValue(undefined),
 
   logActivity: vi.fn().mockResolvedValue(undefined),
   extractRequestInfo: vi.fn().mockReturnValue({ ipAddress: '127.0.0.1', userAgent: 'test' }),

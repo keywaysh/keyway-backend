@@ -6,7 +6,7 @@ import { eq, and, inArray, isNull } from 'drizzle-orm';
 import { getEncryptionService, sanitizeForLogging } from '../../../utils/encryption';
 import { sendData, NotFoundError, BadRequestError, PlanLimitError } from '../../../lib';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
-import { logActivity, extractRequestInfo, detectPlatform } from '../../../services';
+import { logActivity, extractRequestInfo, detectPlatform, trashSecretsByIds } from '../../../services';
 import { processPullEvent, generateDeviceId } from '../../../services/security.service';
 import { canWriteToVault } from '../../../services/usage.service';
 import { repoFullNameSchema, DEFAULT_ENVIRONMENTS } from '../../../types';
@@ -193,13 +193,13 @@ export async function secretsRoutes(fastify: FastifyInstance) {
       }
     }
 
-    // Delete secrets not in the pushed set
-    const keysToDelete = existingSecrets
+    // Soft-delete secrets not in the pushed set (move to trash)
+    const idsToTrash = existingSecrets
       .filter(s => !body.secrets.hasOwnProperty(s.key))
       .map(s => s.id);
 
-    if (keysToDelete.length > 0) {
-      await db.delete(secrets).where(inArray(secrets.id, keysToDelete));
+    if (idsToTrash.length > 0) {
+      await trashSecretsByIds(idsToTrash);
     }
 
     // Update vault timestamp
@@ -214,7 +214,7 @@ export async function secretsRoutes(fastify: FastifyInstance) {
       environment: body.environment,
       created,
       updated,
-      deleted: keysToDelete.length,
+      deleted: idsToTrash.length,
       platform: detectPlatform(request),
     });
 
@@ -229,7 +229,7 @@ export async function secretsRoutes(fastify: FastifyInstance) {
           environment: body.environment,
           created,
           updated,
-          deleted: keysToDelete.length,
+          deleted: idsToTrash.length,
         },
         ...extractRequestInfo(request),
       });
@@ -238,7 +238,7 @@ export async function secretsRoutes(fastify: FastifyInstance) {
     return sendData(reply, {
       success: true,
       message: 'Secrets pushed successfully',
-      stats: { created, updated, deleted: keysToDelete.length },
+      stats: { created, updated, deleted: idsToTrash.length },
     }, { requestId: request.id });
   });
 

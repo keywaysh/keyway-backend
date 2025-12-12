@@ -3,11 +3,17 @@ import { UnauthorizedError, ForbiddenError } from '../lib';
 import { getUserFromToken, getUserRoleWithApp } from '../utils/github';
 import { verifyKeywayToken } from '../utils/jwt';
 import { decryptAccessToken } from '../utils/tokenEncryption';
-import { db, users, vaults } from '../db';
-import { eq } from 'drizzle-orm';
+import { db, users, vaults, apiKeys } from '../db';
+import { eq, and, isNull } from 'drizzle-orm';
 import { hasEnvironmentPermission } from '../utils/permissions';
-import type { PermissionType } from '../db/schema';
+import type { PermissionType, ApiKey } from '../db/schema';
 import { config } from '../config';
+import {
+  isKeywayApiKey,
+  validateApiKeyFormat,
+  hashApiKey,
+  type ApiKeyScope,
+} from '../utils/apiKeys';
 
 /**
  * Clear both session cookies (keyway_session and keyway_logged_in)
@@ -52,6 +58,14 @@ declare module 'fastify' {
       username: string;
       email: string | null;
       avatarUrl: string | null;
+    };
+    /** Present when authenticated via API key */
+    apiKey?: {
+      id: string;
+      name: string;
+      environment: 'live' | 'test';
+      scopes: string[];
+      userId: string;
     };
   }
 }
@@ -99,6 +113,13 @@ export async function authenticateGitHub(
   // Log token info for debugging
   const tokenPreview = token.substring(0, 20) + '...' + token.substring(token.length - 10);
   request.log.info({ tokenPreview, tokenLength: token.length }, 'Auth middleware: received token');
+
+  // Step 0: Check if it's a Keyway API key (kw_live_* or kw_test_*)
+  if (isKeywayApiKey(token)) {
+    request.log.info('Auth middleware: detected Keyway API key');
+    await authenticateWithApiKey(request, token);
+    return;
+  }
 
   // Step 1: Try to verify as Keyway JWT token
   let payload;
@@ -166,6 +187,100 @@ export async function authenticateGitHub(
     email: user.email,
     avatarUrl: user.avatarUrl,
   };
+}
+
+/**
+ * Authenticate using Keyway API key (kw_live_* or kw_test_*)
+ */
+async function authenticateWithApiKey(request: FastifyRequest, token: string) {
+  // Validate format
+  if (!validateApiKeyFormat(token)) {
+    throw new UnauthorizedError('Invalid API key format');
+  }
+
+  // Hash the token for lookup
+  const keyHash = hashApiKey(token);
+
+  // Find the API key in database
+  const apiKey = await db.query.apiKeys.findFirst({
+    where: and(
+      eq(apiKeys.keyHash, keyHash),
+      isNull(apiKeys.revokedAt)
+    ),
+    with: { user: true },
+  });
+
+  if (!apiKey) {
+    request.log.warn('Auth middleware: API key not found or revoked');
+    throw new UnauthorizedError('Invalid or revoked API key');
+  }
+
+  // Check expiration
+  if (apiKey.expiresAt && apiKey.expiresAt < new Date()) {
+    request.log.warn({ apiKeyId: apiKey.id }, 'Auth middleware: API key expired');
+    throw new UnauthorizedError('API key has expired');
+  }
+
+  // Check IP restriction if configured
+  if (apiKey.allowedIps && apiKey.allowedIps.length > 0) {
+    const clientIp = request.ip || 'unknown';
+    // Simple check - for production, use a proper CIDR matching library
+    if (!apiKey.allowedIps.some(ip => ip === clientIp || ip === '0.0.0.0/0')) {
+      request.log.warn({ apiKeyId: apiKey.id, clientIp }, 'Auth middleware: IP not allowed');
+      throw new UnauthorizedError('IP address not allowed for this API key');
+    }
+  }
+
+  const user = apiKey.user;
+  if (!user) {
+    request.log.error({ apiKeyId: apiKey.id }, 'Auth middleware: API key user not found');
+    throw new UnauthorizedError('API key owner not found');
+  }
+
+  // Update last used timestamp and usage count (fire and forget)
+  db.update(apiKeys)
+    .set({
+      lastUsedAt: new Date(),
+      usageCount: (apiKey.usageCount || 0) + 1,
+    })
+    .where(eq(apiKeys.id, apiKey.id))
+    .catch(err => request.log.error(err, 'Failed to update API key usage'));
+
+  // Decrypt the user's GitHub access token for API calls
+  try {
+    request.accessToken = await decryptAccessToken({
+      encryptedAccessToken: user.encryptedAccessToken,
+      accessTokenIv: user.accessTokenIv,
+      accessTokenAuthTag: user.accessTokenAuthTag,
+      tokenEncryptionVersion: user.tokenEncryptionVersion ?? 1,
+    });
+  } catch (decryptError) {
+    const errorMessage = decryptError instanceof Error ? decryptError.message : 'Unknown error';
+    request.log.error({ error: errorMessage, userId: user.id }, 'Auth middleware: Failed to decrypt GitHub token for API key');
+    throw new UnauthorizedError('Failed to decrypt stored credentials. Please re-authenticate.');
+  }
+
+  // Set request context
+  request.githubUser = {
+    githubId: user.githubId,
+    username: user.username,
+    email: user.email,
+    avatarUrl: user.avatarUrl,
+  };
+
+  request.apiKey = {
+    id: apiKey.id,
+    name: apiKey.name,
+    environment: apiKey.environment,
+    scopes: apiKey.scopes || [],
+    userId: user.id,
+  };
+
+  request.log.info({
+    apiKeyId: apiKey.id,
+    apiKeyName: apiKey.name,
+    username: user.username,
+  }, 'Auth middleware: API key authenticated successfully');
 }
 
 /**

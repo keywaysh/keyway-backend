@@ -115,6 +115,12 @@ export const installationStatusEnum = pgEnum('installation_status', [
   'deleted',
 ]);
 
+// API Key environment type
+export const apiKeyEnvironmentEnum = pgEnum('api_key_environment', [
+  'live',
+  'test',
+]);
+
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   githubId: integer('github_id').notNull().unique(),
@@ -357,6 +363,31 @@ export const githubAppInstallationTokens = pgTable('github_app_installation_toke
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// API Keys for programmatic access
+export const apiKeys = pgTable('api_keys', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(), // Human-readable name ("CI/CD Production", "Local dev")
+  // Token stored as hash only (SHA-256), never in clear text
+  keyPrefix: text('key_prefix').notNull(), // "kw_live_a1b2c3d4" for display
+  keyHash: text('key_hash').notNull().unique(), // SHA-256 of full token
+  // Metadata
+  environment: apiKeyEnvironmentEnum('environment').notNull(), // 'live' | 'test'
+  scopes: text('scopes').array().notNull().default([]), // ['read:secrets', 'write:secrets']
+  // Limits
+  expiresAt: timestamp('expires_at'), // NULL = never expires
+  lastUsedAt: timestamp('last_used_at'),
+  usageCount: integer('usage_count').notNull().default(0),
+  // Audit
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  revokedAt: timestamp('revoked_at'),
+  revokedReason: text('revoked_reason'), // 'manual' | 'github_leak' | 'expired'
+  // Security
+  allowedIps: text('allowed_ips').array(), // CIDR notation, NULL = all IPs allowed
+  createdFromIp: text('created_from_ip'),
+  createdUserAgent: text('created_user_agent'),
+});
+
 // Sync logs (audit trail for each sync operation)
 export const syncLogs = pgTable('sync_logs', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -386,6 +417,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   providerConnections: many(providerConnections),
   subscription: one(subscriptions),
   githubAppInstallations: many(githubAppInstallations),
+  apiKeys: many(apiKeys),
 }));
 
 export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
@@ -546,6 +578,13 @@ export const githubAppInstallationTokensRelations = relations(githubAppInstallat
   }),
 }));
 
+export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
+  user: one(users, {
+    fields: [apiKeys.userId],
+    references: [users.id],
+  }),
+}));
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Vault = typeof vaults.$inferSelect;
@@ -593,3 +632,6 @@ export type GithubAppInstallationToken = typeof githubAppInstallationTokens.$inf
 export type NewGithubAppInstallationToken = typeof githubAppInstallationTokens.$inferInsert;
 export type InstallationAccountType = typeof installationAccountTypeEnum.enumValues[number];
 export type InstallationStatus = typeof installationStatusEnum.enumValues[number];
+export type ApiKey = typeof apiKeys.$inferSelect;
+export type NewApiKey = typeof apiKeys.$inferInsert;
+export type ApiKeyEnvironment = typeof apiKeyEnvironmentEnum.enumValues[number];

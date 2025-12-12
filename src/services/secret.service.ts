@@ -1,5 +1,5 @@
 import { db, secrets } from '../db';
-import { eq, and, desc, count, isNull, isNotNull, lt } from 'drizzle-orm';
+import { eq, and, desc, count, isNull, isNotNull, lt, inArray } from 'drizzle-orm';
 import { getEncryptionService } from '../utils/encryption';
 
 // Trash retention period in days
@@ -191,6 +191,19 @@ export async function trashSecret(
     .where(eq(secrets.id, secretId));
 
   return { key: secret.key, environment: secret.environment, deletedAt, expiresAt };
+}
+
+/**
+ * Bulk soft-delete secrets by IDs (move to trash)
+ * Used by push operation when secrets are removed from .env file
+ */
+export async function trashSecretsByIds(secretIds: string[]): Promise<void> {
+  if (secretIds.length === 0) return;
+
+  await db
+    .update(secrets)
+    .set({ deletedAt: new Date() })
+    .where(inArray(secrets.id, secretIds));
 }
 
 /**

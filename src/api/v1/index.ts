@@ -8,6 +8,7 @@ import { billingRoutes } from './routes/billing.routes';
 import { integrationsRoutes } from './routes/integrations.routes';
 import { adminRoutes } from './routes/admin.routes';
 import { githubRoutes } from './routes/github.routes';
+import { apiKeysRoutes } from './routes/api-keys.routes';
 
 /**
  * API v1 Router
@@ -24,6 +25,7 @@ export async function apiV1Routes(fastify: FastifyInstance) {
   fastify.register(integrationsRoutes, { prefix: '/integrations' });
   fastify.register(adminRoutes, { prefix: '/admin' });
   fastify.register(githubRoutes, { prefix: '/github' });
+  fastify.register(apiKeysRoutes, { prefix: '/api-keys' });
 
   // Health check for v1
   fastify.get('/health', async () => ({

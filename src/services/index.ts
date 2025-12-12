@@ -20,6 +20,7 @@ export {
   generatePreview,
   // Trash operations
   trashSecret,
+  trashSecretsByIds,
   permanentlyDeleteSecret,
   getTrashedSecrets,
   getTrashedSecretsCount,

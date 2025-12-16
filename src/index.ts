@@ -104,22 +104,31 @@ fastify.addHook('onSend', async (request, reply) => {
   reply.header('X-Request-ID', request.id);
 });
 
+// Helper to add timeout to a promise (cleans up timer on completion)
+const withTimeout = <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+  let timeoutId: NodeJS.Timeout;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error('Timeout')), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
+};
+
 // Health check endpoint
 fastify.get('/health', async (request, reply) => {
   let dbStatus = 'connected';
   let cryptoStatus = 'connected';
   let cryptoVersion: string | undefined;
 
-  // Check database connectivity
+  // Check database connectivity with a 5s timeout
   try {
-    await dbConnection`SELECT 1`;
+    await withTimeout(dbConnection`SELECT 1`, 5000);
   } catch {
     dbStatus = 'disconnected';
   }
 
-  // Check crypto service connectivity
+  // Check crypto service connectivity with a 3s timeout
   try {
-    const health = await checkCryptoService(config.crypto.serviceUrl);
+    const health = await withTimeout(checkCryptoService(config.crypto.serviceUrl), 3000);
     cryptoVersion = health.version;
   } catch {
     cryptoStatus = 'disconnected';

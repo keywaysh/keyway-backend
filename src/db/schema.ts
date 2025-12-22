@@ -1,4 +1,4 @@
-import { pgTable, text, integer, timestamp, uuid, pgEnum, decimal, jsonb, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, text, integer, timestamp, uuid, pgEnum, decimal, jsonb, boolean, unique } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import { DEFAULT_ENVIRONMENTS } from '../types';
 
@@ -52,9 +52,9 @@ export const activityActionEnum = pgEnum('activity_action', [
   // Billing actions
   'plan_upgraded',
   'plan_downgraded',
-  // GitHub App actions
-  'github_app_installed',
-  'github_app_uninstalled',
+  // VCS App actions (GitHub App, GitLab Integration, etc.)
+  'vcs_app_installed',
+  'vcs_app_uninstalled',
   // Auth actions
   'user_login',
   // API Key actions
@@ -107,13 +107,13 @@ export const billingStatusEnum = pgEnum('billing_status', [
   'trialing',
 ]);
 
-// GitHub App installation account types
+// VCS App installation account types
 export const installationAccountTypeEnum = pgEnum('installation_account_type', [
   'user',
   'organization',
 ]);
 
-// GitHub App installation status
+// VCS App installation status
 export const installationStatusEnum = pgEnum('installation_status', [
   'active',
   'suspended',
@@ -126,13 +126,24 @@ export const apiKeyEnvironmentEnum = pgEnum('api_key_environment', [
   'test',
 ]);
 
+// Organization role enum (synced from GitHub org membership)
+export const orgRoleEnum = pgEnum('org_role', ['owner', 'member']);
+
+// Permission override target type
+export const overrideTargetTypeEnum = pgEnum('override_target_type', ['user', 'role']);
+
+// VCS Forge type (multi-forge support)
+export const forgeTypeEnum = pgEnum('forge_type', ['github', 'gitlab', 'bitbucket']);
+
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
-  githubId: integer('github_id').notNull().unique(),
+  // Multi-forge identity (replaces githubId)
+  forgeType: forgeTypeEnum('forge_type').notNull().default('github'),
+  forgeUserId: text('forge_user_id').notNull(), // ID as text for all forges
   username: text('username').notNull(),
   email: text('email'),
   avatarUrl: text('avatar_url'),
-  // Encrypted GitHub access token (AES-256-GCM)
+  // Encrypted VCS access token (AES-256-GCM)
   encryptedAccessToken: text('encrypted_access_token').notNull(),
   accessTokenIv: text('access_token_iv').notNull(),
   accessTokenAuthTag: text('access_token_auth_tag').notNull(),
@@ -143,22 +154,31 @@ export const users = pgTable('users', {
   stripeCustomerId: text('stripe_customer_id'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
-});
+}, (table) => [
+  unique('users_forge_unique').on(table.forgeType, table.forgeUserId),
+]);
 
 export const vaults = pgTable('vaults', {
   id: uuid('id').primaryKey().defaultRandom(),
-  repoFullName: text('repo_full_name').notNull().unique(),
+  // Multi-forge support
+  forgeType: forgeTypeEnum('forge_type').notNull().default('github'),
+  repoFullName: text('repo_full_name').notNull(), // Unique per forge (see constraint below)
   ownerId: uuid('owner_id').notNull().references(() => users.id),
-  // Whether the GitHub repo is private (fetched from GitHub API during creation)
+  // Link to organization (for org repos, null for personal repos)
+  // Note: FK constraint added via migration to avoid circular reference
+  orgId: uuid('org_id'),
+  // Whether the repo is private (fetched from VCS API during creation)
   isPrivate: boolean('is_private').notNull().default(false),
   // List of environments for this vault (dynamic, user-managed)
   environments: text('environments').array().notNull().default([...DEFAULT_ENVIRONMENTS]),
-  // Link to GitHub App installation (for repos using GitHub App access)
-  // Note: FK constraint added via migration, references github_app_installations.id
-  githubAppInstallationId: uuid('github_app_installation_id'),
+  // Link to VCS App installation (for repos using VCS App access)
+  // Note: FK constraint added via migration, references vcs_app_installations.id
+  vcsAppInstallationId: uuid('vcs_app_installation_id'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
-});
+}, (table) => [
+  unique('vaults_forge_repo_unique').on(table.forgeType, table.repoFullName),
+]);
 
 // Individual secrets (key-value pairs)
 export const secrets = pgTable('secrets', {
@@ -335,10 +355,12 @@ export const stripeWebhookEvents = pgTable('stripe_webhook_events', {
 });
 
 // GitHub App installations
-export const githubAppInstallations = pgTable('github_app_installations', {
+export const vcsAppInstallations = pgTable('vcs_app_installations', {
   id: uuid('id').primaryKey().defaultRandom(),
-  // GitHub App installation identifiers
-  installationId: integer('installation_id').notNull().unique(),
+  // Multi-forge support
+  forgeType: forgeTypeEnum('forge_type').notNull().default('github'),
+  // VCS App installation identifiers
+  installationId: integer('installation_id').notNull(),
   accountId: integer('account_id').notNull(),
   accountLogin: text('account_login').notNull(),
   accountType: installationAccountTypeEnum('account_type').notNull(),
@@ -354,13 +376,15 @@ export const githubAppInstallations = pgTable('github_app_installations', {
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
   suspendedAt: timestamp('suspended_at'),
   deletedAt: timestamp('deleted_at'),
-});
+}, (table) => [
+  unique('vcs_app_installations_forge_unique').on(table.forgeType, table.installationId),
+]);
 
-// GitHub App installation repos (junction table for 'selected' repository_selection)
-export const githubAppInstallationRepos = pgTable('github_app_installation_repos', {
+// VCS App installation repos (junction table for 'selected' repository_selection)
+export const vcsAppInstallationRepos = pgTable('vcs_app_installation_repos', {
   id: uuid('id').primaryKey().defaultRandom(),
-  // Links to installation (uses internal id, not GitHub's installation_id)
-  installationId: uuid('installation_id').notNull().references(() => githubAppInstallations.id, { onDelete: 'cascade' }),
+  // Links to installation (uses internal id, not VCS's installation_id)
+  installationId: uuid('installation_id').notNull().references(() => vcsAppInstallations.id, { onDelete: 'cascade' }),
   // GitHub repo identifiers
   repoId: integer('repo_id').notNull(),
   repoFullName: text('repo_full_name').notNull(),
@@ -369,17 +393,17 @@ export const githubAppInstallationRepos = pgTable('github_app_installation_repos
   addedAt: timestamp('added_at').notNull().defaultNow(),
 });
 
-// GitHub App installation token cache (1h TTL)
-export const githubAppInstallationTokens = pgTable('github_app_installation_tokens', {
+// VCS App installation token cache (1h TTL)
+export const vcsAppInstallationTokens = pgTable('vcs_app_installation_tokens', {
   id: uuid('id').primaryKey().defaultRandom(),
   // Links to installation (uses internal id)
-  installationId: uuid('installation_id').notNull().references(() => githubAppInstallations.id, { onDelete: 'cascade' }).unique(),
+  installationId: uuid('installation_id').notNull().references(() => vcsAppInstallations.id, { onDelete: 'cascade' }).unique(),
   // Encrypted token (same pattern as user tokens)
   encryptedToken: text('encrypted_token').notNull(),
   tokenIv: text('token_iv').notNull(),
   tokenAuthTag: text('token_auth_tag').notNull(),
   tokenEncryptionVersion: integer('token_encryption_version').notNull().default(1),
-  // Token expiration (GitHub installation tokens expire in 1 hour)
+  // Token expiration (VCS installation tokens expire in 1 hour)
   expiresAt: timestamp('expires_at').notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
@@ -426,6 +450,73 @@ export const syncLogs = pgTable('sync_logs', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// Organizations table (GitHub organizations)
+export const organizations = pgTable('organizations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // Multi-forge organization identifiers (replaces githubOrgId)
+  forgeType: forgeTypeEnum('forge_type').notNull().default('github'),
+  forgeOrgId: text('forge_org_id').notNull(), // ID as text for all forges
+  login: text('login').notNull(), // Unique per forge (see constraint below)
+  displayName: text('display_name'),
+  avatarUrl: text('avatar_url'),
+  // Billing (per-org for Team plan)
+  plan: userPlanEnum('plan').notNull().default('free'),
+  stripeCustomerId: text('stripe_customer_id'),
+  // Default permissions for this org (can override global defaults)
+  // Structure: { [role]: { [envType]: { read: boolean, write: boolean } } }
+  defaultPermissions: jsonb('default_permissions').default({}),
+  // Timestamps
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => [
+  unique('organizations_forge_unique').on(table.forgeType, table.forgeOrgId),
+]);
+
+// Organization members (junction table between orgs and users)
+export const organizationMembers = pgTable('organization_members', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  // Role in the organization (synced from VCS)
+  orgRole: orgRoleEnum('org_role').notNull().default('member'),
+  // VCS membership state
+  membershipState: text('membership_state').default('active'),
+  // Timestamps
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => [
+  unique('organization_members_org_user_unique').on(table.orgId, table.userId),
+]);
+
+// Permission overrides (per-vault, per-environment)
+// Allows org owners or repo admins to override default permissions for specific users or roles
+export const permissionOverrides = pgTable('permission_overrides', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  vaultId: uuid('vault_id').notNull().references(() => vaults.id, { onDelete: 'cascade' }),
+  // Environment name or '*' for all environments
+  environment: text('environment').notNull(),
+  // Target type: either a specific user OR a GitHub role
+  targetType: overrideTargetTypeEnum('target_type').notNull(),
+  targetUserId: uuid('target_user_id').references(() => users.id, { onDelete: 'cascade' }),
+  targetRole: collaboratorRoleEnum('target_role'),
+  // Permissions granted
+  canRead: boolean('can_read').notNull().default(true),
+  canWrite: boolean('can_write').notNull().default(false),
+  // Audit
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => [
+  // Ensure unique override per vault/env/target combination
+  unique('permission_overrides_unique').on(
+    table.vaultId,
+    table.environment,
+    table.targetType,
+    table.targetUserId,
+    table.targetRole
+  ),
+]);
+
 // Relations
 export const usersRelations = relations(users, ({ many, one }) => ({
   vaults: many(vaults),
@@ -437,8 +528,9 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   usageMetrics: one(usageMetrics),
   providerConnections: many(providerConnections),
   subscription: one(subscriptions),
-  githubAppInstallations: many(githubAppInstallations),
+  vcsAppInstallations: many(vcsAppInstallations),
   apiKeys: many(apiKeys),
+  organizationMemberships: many(organizationMembers),
 }));
 
 export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
@@ -460,12 +552,17 @@ export const vaultsRelations = relations(vaults, ({ one, many }) => ({
     fields: [vaults.ownerId],
     references: [users.id],
   }),
-  githubAppInstallation: one(githubAppInstallations, {
-    fields: [vaults.githubAppInstallationId],
-    references: [githubAppInstallations.id],
+  organization: one(organizations, {
+    fields: [vaults.orgId],
+    references: [organizations.id],
+  }),
+  vcsAppInstallation: one(vcsAppInstallations, {
+    fields: [vaults.vcsAppInstallationId],
+    references: [vcsAppInstallations.id],
   }),
   secrets: many(secrets),
   environmentPermissions: many(environmentPermissions),
+  permissionOverrides: many(permissionOverrides),
   activityLogs: many(activityLogs),
   pullEvents: many(pullEvents),
   securityAlerts: many(securityAlerts),
@@ -594,34 +691,66 @@ export const syncLogsRelations = relations(syncLogs, ({ one }) => ({
   }),
 }));
 
-// GitHub App relations
-export const githubAppInstallationsRelations = relations(githubAppInstallations, ({ one, many }) => ({
+// VCS App relations
+export const vcsAppInstallationsRelations = relations(vcsAppInstallations, ({ one, many }) => ({
   installedByUser: one(users, {
-    fields: [githubAppInstallations.installedByUserId],
+    fields: [vcsAppInstallations.installedByUserId],
     references: [users.id],
   }),
-  repos: many(githubAppInstallationRepos),
-  tokenCache: one(githubAppInstallationTokens),
+  repos: many(vcsAppInstallationRepos),
+  tokenCache: one(vcsAppInstallationTokens),
   vaults: many(vaults),
 }));
 
-export const githubAppInstallationReposRelations = relations(githubAppInstallationRepos, ({ one }) => ({
-  installation: one(githubAppInstallations, {
-    fields: [githubAppInstallationRepos.installationId],
-    references: [githubAppInstallations.id],
+export const vcsAppInstallationReposRelations = relations(vcsAppInstallationRepos, ({ one }) => ({
+  installation: one(vcsAppInstallations, {
+    fields: [vcsAppInstallationRepos.installationId],
+    references: [vcsAppInstallations.id],
   }),
 }));
 
-export const githubAppInstallationTokensRelations = relations(githubAppInstallationTokens, ({ one }) => ({
-  installation: one(githubAppInstallations, {
-    fields: [githubAppInstallationTokens.installationId],
-    references: [githubAppInstallations.id],
+export const vcsAppInstallationTokensRelations = relations(vcsAppInstallationTokens, ({ one }) => ({
+  installation: one(vcsAppInstallations, {
+    fields: [vcsAppInstallationTokens.installationId],
+    references: [vcsAppInstallations.id],
   }),
 }));
 
 export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
   user: one(users, {
     fields: [apiKeys.userId],
+    references: [users.id],
+  }),
+}));
+
+// Organization relations
+export const organizationsRelations = relations(organizations, ({ many }) => ({
+  members: many(organizationMembers),
+  vaults: many(vaults),
+}));
+
+export const organizationMembersRelations = relations(organizationMembers, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [organizationMembers.orgId],
+    references: [organizations.id],
+  }),
+  user: one(users, {
+    fields: [organizationMembers.userId],
+    references: [users.id],
+  }),
+}));
+
+export const permissionOverridesRelations = relations(permissionOverrides, ({ one }) => ({
+  vault: one(vaults, {
+    fields: [permissionOverrides.vaultId],
+    references: [vaults.id],
+  }),
+  targetUser: one(users, {
+    fields: [permissionOverrides.targetUserId],
+    references: [users.id],
+  }),
+  createdByUser: one(users, {
+    fields: [permissionOverrides.createdBy],
     references: [users.id],
   }),
 }));
@@ -665,12 +794,13 @@ export type Subscription = typeof subscriptions.$inferSelect;
 export type NewSubscription = typeof subscriptions.$inferInsert;
 export type StripeWebhookEvent = typeof stripeWebhookEvents.$inferSelect;
 export type NewStripeWebhookEvent = typeof stripeWebhookEvents.$inferInsert;
-export type GithubAppInstallation = typeof githubAppInstallations.$inferSelect;
-export type NewGithubAppInstallation = typeof githubAppInstallations.$inferInsert;
-export type GithubAppInstallationRepo = typeof githubAppInstallationRepos.$inferSelect;
-export type NewGithubAppInstallationRepo = typeof githubAppInstallationRepos.$inferInsert;
-export type GithubAppInstallationToken = typeof githubAppInstallationTokens.$inferSelect;
-export type NewGithubAppInstallationToken = typeof githubAppInstallationTokens.$inferInsert;
+export type VcsAppInstallation = typeof vcsAppInstallations.$inferSelect;
+export type NewVcsAppInstallation = typeof vcsAppInstallations.$inferInsert;
+export type VcsAppInstallationRepo = typeof vcsAppInstallationRepos.$inferSelect;
+export type NewVcsAppInstallationRepo = typeof vcsAppInstallationRepos.$inferInsert;
+export type VcsAppInstallationToken = typeof vcsAppInstallationTokens.$inferSelect;
+export type NewVcsAppInstallationToken = typeof vcsAppInstallationTokens.$inferInsert;
+export type ForgeType = typeof forgeTypeEnum.enumValues[number];
 export type InstallationAccountType = typeof installationAccountTypeEnum.enumValues[number];
 export type InstallationStatus = typeof installationStatusEnum.enumValues[number];
 export type ApiKey = typeof apiKeys.$inferSelect;
@@ -678,3 +808,11 @@ export type NewApiKey = typeof apiKeys.$inferInsert;
 export type ApiKeyEnvironment = typeof apiKeyEnvironmentEnum.enumValues[number];
 export type SecretVersion = typeof secretVersions.$inferSelect;
 export type NewSecretVersion = typeof secretVersions.$inferInsert;
+export type Organization = typeof organizations.$inferSelect;
+export type NewOrganization = typeof organizations.$inferInsert;
+export type OrganizationMember = typeof organizationMembers.$inferSelect;
+export type NewOrganizationMember = typeof organizationMembers.$inferInsert;
+export type PermissionOverride = typeof permissionOverrides.$inferSelect;
+export type NewPermissionOverride = typeof permissionOverrides.$inferInsert;
+export type OrgRole = typeof orgRoleEnum.enumValues[number];
+export type OverrideTargetType = typeof overrideTargetTypeEnum.enumValues[number];

@@ -50,7 +50,7 @@ export async function requireAdmin(
   }
 
   // Check logged-in user
-  const user = request.githubUser;
+  const user = request.vcsUser || request.githubUser;
   if (user && ADMIN_USERNAMES.includes(user.username)) {
     request.log.info({ username: user.username }, 'Admin access granted via user');
     return;

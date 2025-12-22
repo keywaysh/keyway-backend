@@ -105,7 +105,7 @@ export async function secretsRoutes(fastify: FastifyInstance) {
     preHandler: [authenticateGitHub, requireEnvironmentAccess('write')],
   }, async (request, reply) => {
     const body = PushSecretsSchema.parse(request.body);
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await db.query.vaults.findFirst({
       where: eq(vaults.repoFullName, body.repoFullName),
@@ -117,7 +117,10 @@ export async function secretsRoutes(fastify: FastifyInstance) {
 
     // Check plan limit for write access (soft limit for downgraded users)
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     if (user) {
@@ -252,7 +255,7 @@ export async function secretsRoutes(fastify: FastifyInstance) {
     const query = PullSecretsQuerySchema.parse(request.query);
     const repoFullName = query.repo;
     const environment = query.environment;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await db.query.vaults.findFirst({
       where: eq(vaults.repoFullName, repoFullName),
@@ -308,7 +311,10 @@ export async function secretsRoutes(fastify: FastifyInstance) {
     const content = toEnvFormat(secretsMap);
 
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     trackEvent(user?.id || 'anonymous', AnalyticsEvents.SECRETS_PULLED, {
@@ -358,7 +364,7 @@ export async function secretsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const query = ViewSecretQuerySchema.parse(request.query);
     const { repo: repoFullName, environment, key } = query;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await db.query.vaults.findFirst({
       where: eq(vaults.repoFullName, repoFullName),
@@ -397,7 +403,10 @@ export async function secretsRoutes(fastify: FastifyInstance) {
     });
 
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     trackEvent(user?.id || 'anonymous', AnalyticsEvents.SECRET_VIEWED, {

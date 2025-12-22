@@ -42,11 +42,14 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
     preHandler: [authenticateGitHub],
   }, async (request, reply) => {
     const body = CreateApiKeySchema.parse(request.body);
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     // Get user from database
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     if (!user) {
@@ -127,10 +130,13 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
   fastify.get('/', {
     preHandler: [authenticateGitHub],
   }, async (request, reply) => {
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     if (!user) {
@@ -169,10 +175,13 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
     preHandler: [authenticateGitHub],
   }, async (request, reply) => {
     const params = ApiKeyIdParamsSchema.parse(request.params);
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     if (!user) {
@@ -215,10 +224,13 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
     preHandler: [authenticateGitHub],
   }, async (request, reply) => {
     const params = ApiKeyIdParamsSchema.parse(request.params);
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     if (!user) {

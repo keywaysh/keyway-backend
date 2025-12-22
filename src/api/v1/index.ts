@@ -9,6 +9,8 @@ import { integrationsRoutes } from './routes/integrations.routes';
 import { adminRoutes } from './routes/admin.routes';
 import { githubRoutes } from './routes/github.routes';
 import { apiKeysRoutes } from './routes/api-keys.routes';
+import { organizationsRoutes } from './routes/organizations.routes';
+import { permissionOverridesRoutes } from './routes/permission-overrides.routes';
 
 /**
  * API v1 Router
@@ -26,6 +28,9 @@ export async function apiV1Routes(fastify: FastifyInstance) {
   fastify.register(adminRoutes, { prefix: '/admin' });
   fastify.register(githubRoutes, { prefix: '/github' });
   fastify.register(apiKeysRoutes, { prefix: '/api-keys' });
+  fastify.register(organizationsRoutes, { prefix: '/orgs' });
+  // Permission overrides are nested under vaults but in separate file for clarity
+  fastify.register(permissionOverridesRoutes, { prefix: '/vaults' });
 
   // Health check for v1
   fastify.get('/health', async () => ({

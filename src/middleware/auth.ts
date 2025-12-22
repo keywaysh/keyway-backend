@@ -5,8 +5,8 @@ import { verifyKeywayToken } from '../utils/jwt';
 import { decryptAccessToken } from '../utils/tokenEncryption';
 import { db, users, vaults, apiKeys } from '../db';
 import { eq, and, isNull } from 'drizzle-orm';
-import { hasEnvironmentPermission } from '../utils/permissions';
-import type { PermissionType, ApiKey } from '../db/schema';
+import { hasEnvironmentPermission, resolveEffectivePermission } from '../utils/permissions';
+import type { PermissionType, ApiKey, ForgeType } from '../db/schema';
 import { config } from '../config';
 import {
   isKeywayApiKey,
@@ -53,8 +53,18 @@ function clearSessionCookies(request: FastifyRequest, reply: FastifyReply) {
 declare module 'fastify' {
   interface FastifyRequest {
     accessToken?: string;
+    /** VCS user info (multi-forge support) */
+    vcsUser?: {
+      forgeType: ForgeType;
+      forgeUserId: string;
+      username: string;
+      email: string | null;
+      avatarUrl: string | null;
+    };
+    /** @deprecated Use vcsUser instead */
     githubUser?: {
-      githubId: number;
+      forgeType: ForgeType;
+      forgeUserId: string;
       username: string;
       email: string | null;
       avatarUrl: string | null;
@@ -135,11 +145,19 @@ export async function authenticateGitHub(
       request.log.info({ tokenPreview }, 'Auth middleware: trying as GitHub token');
       try {
         const githubUser = await getUserFromToken(token);
-        request.log.info({ githubId: githubUser.githubId, username: githubUser.username }, 'Auth middleware: GitHub token valid');
+        request.log.info({ forgeUserId: githubUser.forgeUserId, username: githubUser.username }, 'Auth middleware: GitHub token valid');
 
         // Attach to request for use in route handlers
         request.accessToken = token;
-        request.githubUser = githubUser;
+        const vcsUser = {
+          forgeType: 'github' as ForgeType,
+          forgeUserId: githubUser.forgeUserId,
+          username: githubUser.username,
+          email: githubUser.email,
+          avatarUrl: githubUser.avatarUrl,
+        };
+        request.vcsUser = vcsUser;
+        request.githubUser = vcsUser; // Backward compatibility
         return;
       } catch (githubError) {
         const ghErrorMsg = githubError instanceof Error ? githubError.message : 'Unknown error';
@@ -181,12 +199,15 @@ export async function authenticateGitHub(
     throw new UnauthorizedError('Failed to decrypt stored credentials. Please re-authenticate.');
   }
 
-  request.githubUser = {
-    githubId: user.githubId,
+  const vcsUser = {
+    forgeType: user.forgeType,
+    forgeUserId: user.forgeUserId,
     username: user.username,
     email: user.email,
     avatarUrl: user.avatarUrl,
   };
+  request.vcsUser = vcsUser;
+  request.githubUser = vcsUser; // Backward compatibility
 }
 
 /**
@@ -261,12 +282,15 @@ async function authenticateWithApiKey(request: FastifyRequest, token: string) {
   }
 
   // Set request context
-  request.githubUser = {
-    githubId: user.githubId,
+  const vcsUser = {
+    forgeType: user.forgeType,
+    forgeUserId: user.forgeUserId,
     username: user.username,
     email: user.email,
     avatarUrl: user.avatarUrl,
   };
+  request.vcsUser = vcsUser;
+  request.githubUser = vcsUser; // Backward compatibility
 
   request.apiKey = {
     id: apiKey.id,
@@ -292,7 +316,8 @@ export async function requireAdminAccess(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
-  if (!request.accessToken || !request.githubUser) {
+  const vcsUser = request.vcsUser || request.githubUser;
+  if (!request.accessToken || !vcsUser) {
     throw new UnauthorizedError('Authentication required');
   }
 
@@ -309,7 +334,7 @@ export async function requireAdminAccess(
   }
 
   // Use GitHub App to check user's role on the repo
-  const role = await getUserRoleWithApp(repoFullName, request.githubUser.username);
+  const role = await getUserRoleWithApp(repoFullName, vcsUser.username);
   const isAdmin = role === 'admin';
 
   if (!isAdmin) {
@@ -323,7 +348,8 @@ export async function requireAdminAccess(
  */
 export function requireEnvironmentAccess(permissionType: PermissionType) {
   return async function (request: FastifyRequest, reply: FastifyReply) {
-    if (!request.accessToken || !request.githubUser) {
+    const vcsUser = request.vcsUser || request.githubUser;
+    if (!request.accessToken || !vcsUser) {
       throw new UnauthorizedError('Authentication required');
     }
 
@@ -349,7 +375,7 @@ export function requireEnvironmentAccess(permissionType: PermissionType) {
     // Get user's role for this repository using GitHub App
     const userRole = await getUserRoleWithApp(
       repoFullName,
-      request.githubUser.username
+      vcsUser.username
     );
 
     if (!userRole) {
@@ -365,13 +391,29 @@ export function requireEnvironmentAccess(permissionType: PermissionType) {
       throw new ForbiddenError('Vault not found for this repository');
     }
 
-    // Check environment permission
-    const hasPermission = await hasEnvironmentPermission(
-      vault.id,
-      environment,
-      userRole,
-      permissionType
-    );
+    // Get user ID for override checking
+    const user = await db.query.users.findFirst({
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
+    });
+
+    // Check environment permission using the new override-aware system
+    const hasPermission = user
+      ? await resolveEffectivePermission(
+          vault.id,
+          environment,
+          user.id,
+          userRole,
+          permissionType
+        )
+      : await hasEnvironmentPermission(
+          vault.id,
+          environment,
+          userRole,
+          permissionType
+        );
 
     if (!hasPermission) {
       const action = permissionType === 'read' ? 'read from' : 'write to';

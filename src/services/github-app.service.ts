@@ -2,10 +2,10 @@ import * as crypto from 'crypto';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../db';
 import {
-  githubAppInstallations,
-  githubAppInstallationRepos,
-  githubAppInstallationTokens,
-  type GithubAppInstallation,
+  vcsAppInstallations,
+  vcsAppInstallationRepos,
+  vcsAppInstallationTokens,
+  type VcsAppInstallation,
   type InstallationAccountType,
   type InstallationStatus,
 } from '../db/schema';
@@ -68,8 +68,8 @@ export async function getInstallationToken(
   logger.debug({ installationId }, 'Getting installation token');
 
   // Find the installation in our database
-  const installation = await db.query.githubAppInstallations.findFirst({
-    where: eq(githubAppInstallations.installationId, installationId),
+  const installation = await db.query.vcsAppInstallations.findFirst({
+    where: eq(vcsAppInstallations.installationId, installationId),
     with: { tokenCache: true },
   });
 
@@ -140,7 +140,7 @@ export async function getInstallationToken(
   const encrypted = await encryptionService.encrypt(data.token);
 
   await db
-    .insert(githubAppInstallationTokens)
+    .insert(vcsAppInstallationTokens)
     .values({
       installationId: installation.id,
       encryptedToken: encrypted.encryptedContent,
@@ -150,7 +150,7 @@ export async function getInstallationToken(
       expiresAt: new Date(data.expires_at),
     })
     .onConflictDoUpdate({
-      target: githubAppInstallationTokens.installationId,
+      target: vcsAppInstallationTokens.installationId,
       set: {
         encryptedToken: encrypted.encryptedContent,
         tokenIv: encrypted.iv,
@@ -171,13 +171,13 @@ export async function getInstallationToken(
 export async function findInstallationForRepo(
   repoOwner: string,
   repoName: string
-): Promise<GithubAppInstallation | null> {
+): Promise<VcsAppInstallation | null> {
   const repoFullName = `${repoOwner}/${repoName}`;
   logger.debug({ repoFullName }, 'Finding installation for repo');
 
   // First, check if repo is in selected repos for any installation
-  const repoEntry = await db.query.githubAppInstallationRepos.findFirst({
-    where: eq(githubAppInstallationRepos.repoFullName, repoFullName),
+  const repoEntry = await db.query.vcsAppInstallationRepos.findFirst({
+    where: eq(vcsAppInstallationRepos.repoFullName, repoFullName),
     with: { installation: true },
   });
 
@@ -191,11 +191,11 @@ export async function findInstallationForRepo(
   }
 
   // Check if there's an "all repos" installation for this account
-  const allReposInstallation = await db.query.githubAppInstallations.findFirst({
+  const allReposInstallation = await db.query.vcsAppInstallations.findFirst({
     where: and(
-      eq(githubAppInstallations.accountLogin, repoOwner),
-      eq(githubAppInstallations.repositorySelection, 'all'),
-      eq(githubAppInstallations.status, 'active')
+      eq(vcsAppInstallations.accountLogin, repoOwner),
+      eq(vcsAppInstallations.repositorySelection, 'all'),
+      eq(vcsAppInstallations.status, 'active')
     ),
   });
 
@@ -224,7 +224,7 @@ export async function findInstallationForRepo(
 async function findInstallationViaGitHubAPI(
   repoOwner: string,
   repoName: string
-): Promise<GithubAppInstallation | null> {
+): Promise<VcsAppInstallation | null> {
   try {
     const jwt = generateAppJWT();
     const response = await fetch(
@@ -249,9 +249,10 @@ async function findInstallationViaGitHubAPI(
       permissions: Record<string, string>;
     };
 
-    // Return a GithubAppInstallation-like object
+    // Return a VcsAppInstallation-like object
     return {
       id: '', // Will be set when synced to DB
+      forgeType: 'github' as const,
       installationId: data.id,
       accountId: data.account.id,
       accountLogin: data.account.login,
@@ -275,7 +276,7 @@ async function findInstallationViaGitHubAPI(
  * Sync an installation found via API to the database
  * Uses createInstallation which handles upsert
  */
-async function syncInstallationFromAPI(installation: GithubAppInstallation): Promise<void> {
+async function syncInstallationFromAPI(installation: VcsAppInstallation): Promise<void> {
   try {
     await createInstallation({
       installationId: installation.installationId,
@@ -367,9 +368,9 @@ interface CreateInstallationInput {
 /**
  * Create a new installation record (called from webhook)
  */
-export async function createInstallation(input: CreateInstallationInput): Promise<GithubAppInstallation> {
+export async function createInstallation(input: CreateInstallationInput): Promise<VcsAppInstallation> {
   const [installation] = await db
-    .insert(githubAppInstallations)
+    .insert(vcsAppInstallations)
     .values({
       installationId: input.installationId,
       accountId: input.accountId,
@@ -380,7 +381,7 @@ export async function createInstallation(input: CreateInstallationInput): Promis
       installedByUserId: input.installedByUserId,
     })
     .onConflictDoUpdate({
-      target: githubAppInstallations.installationId,
+      target: vcsAppInstallations.installationId,
       set: {
         accountLogin: input.accountLogin,
         repositorySelection: input.repositorySelection,
@@ -395,7 +396,7 @@ export async function createInstallation(input: CreateInstallationInput): Promis
 
   // Add repositories if provided
   if (input.repositories && input.repositories.length > 0) {
-    await db.insert(githubAppInstallationRepos).values(
+    await db.insert(vcsAppInstallationRepos).values(
       input.repositories.map((repo) => ({
         installationId: installation.id,
         repoId: repo.id,
@@ -413,23 +414,23 @@ export async function createInstallation(input: CreateInstallationInput): Promis
  */
 export async function deleteInstallation(installationId: number): Promise<void> {
   await db
-    .update(githubAppInstallations)
+    .update(vcsAppInstallations)
     .set({
       status: 'deleted' as InstallationStatus,
       deletedAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(eq(githubAppInstallations.installationId, installationId));
+    .where(eq(vcsAppInstallations.installationId, installationId));
 
   // Clear token cache
-  const installation = await db.query.githubAppInstallations.findFirst({
-    where: eq(githubAppInstallations.installationId, installationId),
+  const installation = await db.query.vcsAppInstallations.findFirst({
+    where: eq(vcsAppInstallations.installationId, installationId),
   });
 
   if (installation) {
     await db
-      .delete(githubAppInstallationTokens)
-      .where(eq(githubAppInstallationTokens.installationId, installation.id));
+      .delete(vcsAppInstallationTokens)
+      .where(eq(vcsAppInstallationTokens.installationId, installation.id));
   }
 }
 
@@ -440,7 +441,7 @@ export async function updateInstallationStatus(
   installationId: number,
   status: InstallationStatus
 ): Promise<void> {
-  const updates: Partial<GithubAppInstallation> = {
+  const updates: Partial<VcsAppInstallation> = {
     status,
     updatedAt: new Date(),
   };
@@ -452,9 +453,9 @@ export async function updateInstallationStatus(
   }
 
   await db
-    .update(githubAppInstallations)
+    .update(vcsAppInstallations)
     .set(updates)
-    .where(eq(githubAppInstallations.installationId, installationId));
+    .where(eq(vcsAppInstallations.installationId, installationId));
 }
 
 /**
@@ -465,8 +466,8 @@ export async function updateInstallationRepos(
   added: Array<{ id: number; full_name: string; private: boolean }>,
   removed: Array<{ id: number }>
 ): Promise<void> {
-  const installation = await db.query.githubAppInstallations.findFirst({
-    where: eq(githubAppInstallations.installationId, installationId),
+  const installation = await db.query.vcsAppInstallations.findFirst({
+    where: eq(vcsAppInstallations.installationId, installationId),
   });
 
   if (!installation) {
@@ -475,7 +476,7 @@ export async function updateInstallationRepos(
 
   // Add new repos
   if (added.length > 0) {
-    await db.insert(githubAppInstallationRepos).values(
+    await db.insert(vcsAppInstallationRepos).values(
       added.map((repo) => ({
         installationId: installation.id,
         repoId: repo.id,
@@ -488,29 +489,29 @@ export async function updateInstallationRepos(
   // Remove repos
   for (const repo of removed) {
     await db
-      .delete(githubAppInstallationRepos)
+      .delete(vcsAppInstallationRepos)
       .where(
         and(
-          eq(githubAppInstallationRepos.installationId, installation.id),
-          eq(githubAppInstallationRepos.repoId, repo.id)
+          eq(vcsAppInstallationRepos.installationId, installation.id),
+          eq(vcsAppInstallationRepos.repoId, repo.id)
         )
       );
   }
 
   await db
-    .update(githubAppInstallations)
+    .update(vcsAppInstallations)
     .set({ updatedAt: new Date() })
-    .where(eq(githubAppInstallations.id, installation.id));
+    .where(eq(vcsAppInstallations.id, installation.id));
 }
 
 /**
  * Get all installations for a user
  */
-export async function getInstallationsForUser(userId: string): Promise<GithubAppInstallation[]> {
-  return db.query.githubAppInstallations.findMany({
+export async function getInstallationsForUser(userId: string): Promise<VcsAppInstallation[]> {
+  return db.query.vcsAppInstallations.findMany({
     where: and(
-      eq(githubAppInstallations.installedByUserId, userId),
-      eq(githubAppInstallations.status, 'active')
+      eq(vcsAppInstallations.installedByUserId, userId),
+      eq(vcsAppInstallations.status, 'active')
     ),
     with: { repos: true },
   });
@@ -521,9 +522,9 @@ export async function getInstallationsForUser(userId: string): Promise<GithubApp
  */
 export async function getInstallationByGitHubId(
   installationId: number
-): Promise<GithubAppInstallation | undefined> {
-  return db.query.githubAppInstallations.findFirst({
-    where: eq(githubAppInstallations.installationId, installationId),
+): Promise<VcsAppInstallation | undefined> {
+  return db.query.vcsAppInstallations.findFirst({
+    where: eq(vcsAppInstallations.installationId, installationId),
   });
 }
 
@@ -534,7 +535,7 @@ export async function getInstallationByGitHubId(
 export async function handleInstallationCreated(
   installationId: number,
   installedByUserId?: string
-): Promise<GithubAppInstallation> {
+): Promise<VcsAppInstallation> {
   // Fetch installation details from GitHub API
   const jwt = generateAppJWT();
 

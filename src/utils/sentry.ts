@@ -114,7 +114,7 @@ export function captureError(
  */
 export function setSentryRequestContext(
   request: { id: string; url: string; method: string },
-  user?: { githubId: number; username: string }
+  user?: { forgeType: string; forgeUserId: string; username: string }
 ): void {
   if (!isInitialized) {
     return;
@@ -128,7 +128,7 @@ export function setSentryRequestContext(
 
   if (user) {
     Sentry.setUser({
-      id: user.githubId.toString(),
+      id: `${user.forgeType}:${user.forgeUserId}`,
       username: user.username,
     });
   }

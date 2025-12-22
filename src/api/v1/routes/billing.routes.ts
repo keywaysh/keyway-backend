@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { authenticateGitHub } from '../../../middleware/auth';
 import { db, users } from '../../../db';
 import {
@@ -92,11 +92,14 @@ export async function billingRoutes(fastify: FastifyInstance) {
   fastify.get('/subscription', {
     preHandler: [authenticateGitHub],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     // Get user from database
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     if (!user) {
@@ -137,11 +140,14 @@ export async function billingRoutes(fastify: FastifyInstance) {
   fastify.post('/create-checkout-session', {
     preHandler: [authenticateGitHub],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     // Get user from database
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     if (!isStripeEnabled()) {
@@ -214,11 +220,14 @@ export async function billingRoutes(fastify: FastifyInstance) {
   fastify.post('/manage', {
     preHandler: [authenticateGitHub],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     // Get user from database
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     if (!isStripeEnabled()) {

@@ -174,14 +174,16 @@ fastify.setErrorHandler((error: Error & { statusCode?: number; validation?: unkn
 
   // Capture 5xx errors in Sentry (not 4xx client errors)
   if (statusCode >= 500) {
+    const vcsUser = (request as any).vcsUser || (request as any).githubUser;
     captureError(error, {
       requestId: request.id,
       url: request.url,
       method: request.method,
-      userId: (request as any).githubUser?.githubId,
-      username: (request as any).githubUser?.username,
+      userId: vcsUser?.forgeUserId,
+      username: vcsUser?.username,
       extra: {
         errorType: error.constructor.name,
+        forgeType: vcsUser?.forgeType,
       },
     });
   }

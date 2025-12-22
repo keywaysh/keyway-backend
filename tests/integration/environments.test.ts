@@ -7,7 +7,7 @@ vi.mock('../../src/db', () => {
   const mockDb = createMockDb();
   return {
     db: mockDb,
-    users: { id: 'id', githubId: 'githubId' },
+    users: { id: 'id', forgeType: 'forgeType', forgeUserId: 'forgeUserId' },
     vaults: { id: 'id', repoFullName: 'repoFullName', environments: 'environments' },
     secrets: { id: 'id', vaultId: 'vaultId', environment: 'environment' },
     environmentPermissions: { id: 'id', vaultId: 'vaultId', environment: 'environment' },
@@ -36,12 +36,14 @@ vi.mock('../../src/services', () => ({
 // Mock auth middleware (async for Fastify 5)
 vi.mock('../../src/middleware/auth', () => ({
   authenticateGitHub: vi.fn(async (request: any) => {
-    request.githubUser = {
-      githubId: mockUser.githubId,
+    request.vcsUser = {
+      forgeType: mockUser.forgeType,
+      forgeUserId: mockUser.forgeUserId,
       username: mockUser.username,
       email: mockUser.email,
       avatarUrl: mockUser.avatarUrl,
     };
+    request.githubUser = request.vcsUser; // Backward compatibility
     request.accessToken = 'test-token';
   }),
   requireAdminAccess: vi.fn(async () => {

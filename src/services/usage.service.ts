@@ -2,6 +2,7 @@ import { db, users, vaults, usageMetrics, secrets, providerConnections } from '.
 import { eq, and, sql, asc, count } from 'drizzle-orm';
 import type { UserPlan } from '../db/schema';
 import { getPlanLimits, formatLimit, canCreateRepo, PLANS } from '../config/plans';
+import { getEffectivePlanForVault } from './organization.service';
 
 /**
  * Usage data for a user
@@ -187,7 +188,10 @@ export async function getPrivateVaultAccess(userId: string, plan: UserPlan): Pro
 }
 
 /**
- * Check if a specific vault allows write operations for this user's plan.
+ * Check if a specific vault allows write operations.
+ *
+ * Uses the effective plan for the vault (org plan if vault belongs to an org,
+ * otherwise the user's plan).
  *
  * - Public vaults: always writable
  * - Pro/Team plans: always writable
@@ -195,7 +199,7 @@ export async function getPrivateVaultAccess(userId: string, plan: UserPlan): Pro
  */
 export async function canWriteToVault(
   userId: string,
-  plan: UserPlan,
+  userPlan: UserPlan,
   vaultId: string,
   isPrivate: boolean
 ): Promise<{ allowed: boolean; reason?: string }> {
@@ -203,6 +207,14 @@ export async function canWriteToVault(
   if (!isPrivate) {
     return { allowed: true };
   }
+
+  // Get effective plan (org plan for org vaults, otherwise user plan)
+  const effectivePlan = await getEffectivePlanForVault(vaultId);
+
+  // Use the better of user plan and effective plan
+  const plan = PLANS[effectivePlan].maxPrivateRepos >= PLANS[userPlan].maxPrivateRepos
+    ? effectivePlan
+    : userPlan;
 
   // Pro/Team plans: always allowed (unlimited private repos)
   if (PLANS[plan].maxPrivateRepos === Infinity) {

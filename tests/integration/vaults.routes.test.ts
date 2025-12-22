@@ -46,17 +46,24 @@ vi.mock('../../src/db', () => {
         deviceCodes: {
           findFirst: vi.fn(),
         },
-        githubAppInstallations: {
+        vcsAppInstallations: {
           findFirst: vi.fn(),
           findMany: vi.fn(),
         },
-        githubAppInstallationRepos: {
+        vcsAppInstallationRepos: {
           findFirst: vi.fn(),
         },
         usageMetrics: {
           findFirst: vi.fn().mockResolvedValue(null),
         },
         vaultEnvironments: {
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+        organizations: {
+          findFirst: vi.fn().mockResolvedValue(null),
+        },
+        organizationMembers: {
+          findFirst: vi.fn().mockResolvedValue(null),
           findMany: vi.fn().mockResolvedValue([]),
         },
       },
@@ -87,15 +94,17 @@ vi.mock('../../src/db', () => {
         }),
       }),
     },
-    users: { id: 'id', githubId: 'githubId' },
-    vaults: { id: 'id', repoFullName: 'repoFullName', ownerId: 'ownerId', isPrivate: 'isPrivate' },
+    users: { id: 'id', forgeType: 'forgeType', forgeUserId: 'forgeUserId' },
+    vaults: { id: 'id', forgeType: 'forgeType', repoFullName: 'repoFullName', ownerId: 'ownerId', isPrivate: 'isPrivate' },
     secrets: { id: 'id', vaultId: 'vaultId' },
     deviceCodes: { id: 'id' },
-    githubAppInstallations: { installationId: 'installationId', accountLogin: 'accountLogin' },
-    githubAppInstallationRepos: { repoFullName: 'repoFullName' },
+    vcsAppInstallations: { installationId: 'installationId', accountLogin: 'accountLogin' },
+    vcsAppInstallationRepos: { repoFullName: 'repoFullName' },
     activityLogs: { id: 'id' },
     usageMetrics: { userId: 'userId' },
     vaultEnvironments: { vaultId: 'vaultId' },
+    organizations: { id: 'id', forgeType: 'forgeType', forgeOrgId: 'forgeOrgId', login: 'login' },
+    organizationMembers: { id: 'id', orgId: 'orgId', userId: 'userId' },
   };
 });
 
@@ -141,7 +150,8 @@ vi.mock('../../src/utils/tokenEncryption', () => ({
 vi.mock('../../src/utils/jwt', () => ({
   verifyKeywayToken: vi.fn().mockReturnValue({
     userId: mockUser.id,
-    githubId: mockUser.githubId,
+    forgeType: mockUser.forgeType,
+    forgeUserId: mockUser.forgeUserId,
     username: mockUser.username,
   }),
   generateKeywayToken: vi.fn().mockReturnValue('mock-keyway-token'),
@@ -175,6 +185,8 @@ vi.mock('../../src/services/vault.service', () => ({
 vi.mock('../../src/utils/permissions', () => ({
   getVaultPermissions: vi.fn().mockResolvedValue([]),
   getDefaultPermission: vi.fn().mockReturnValue('read'),
+  resolveEffectivePermission: vi.fn().mockResolvedValue(true),
+  getEffectivePermissions: vi.fn().mockResolvedValue({ development: { read: true, write: true } }),
 }));
 
 // Mock config/plans
@@ -212,6 +224,7 @@ vi.mock('../../src/services', () => ({
   updateSecret: vi.fn().mockResolvedValue({ id: 'secret-id' }),
   deleteSecret: vi.fn().mockResolvedValue(undefined),
   secretExists: vi.fn().mockResolvedValue(false),
+  getSecretById: vi.fn().mockResolvedValue({ id: 'secret-123', name: 'API_KEY', environment: 'development' }),
   getSecretValue: vi.fn().mockResolvedValue({
     value: 'postgres://user:password@localhost:5432/db',
     preview: 'post••••2/db',

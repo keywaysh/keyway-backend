@@ -3,12 +3,15 @@ import { config } from '../config';
 import crypto from 'crypto';
 import { logger } from './sharedLogger';
 
+import type { ForgeType } from '../db/schema';
+
 /**
  * Payload for Keyway JWT tokens
  */
 export interface KeywayTokenPayload {
   userId: string;
-  githubId: number;
+  forgeType: ForgeType;
+  forgeUserId: string;
   username: string;
 }
 
@@ -63,7 +66,8 @@ export function verifyKeywayToken(token: string): KeywayTokenPayload {
 
     return {
       userId: decoded.sub as string,
-      githubId: decoded.githubId as number,
+      forgeType: decoded.forgeType as ForgeType,
+      forgeUserId: decoded.forgeUserId as string,
       username: decoded.username as string,
     };
   } catch (error) {

@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db, users, deviceCodes } from '../../../db';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { exchangeCodeForToken, getUserFromToken } from '../../../utils/github';
 import { trackEvent, identifyUser, AnalyticsEvents, getSignupSource } from '../../../utils/analytics';
 import { generateDeviceCode, generateUserCode, DEVICE_FLOW_CONFIG } from '../../../utils/deviceCodes';
@@ -32,33 +32,41 @@ function buildCallbackUrl(request: { headers: { 'x-forwarded-proto'?: string; ho
   return `${protocol}://${host}/v1/auth/callback`;
 }
 
-// Helper to create or update user from GitHub data
-async function upsertUser(githubUser: { githubId: number; username: string; email: string | null; avatarUrl: string | null }, accessToken: string) {
+// Helper to create or update user from VCS data
+async function upsertUser(
+  vcsUser: { forgeUserId: string; username: string; email: string | null; avatarUrl: string | null },
+  accessToken: string,
+  forgeType: 'github' | 'gitlab' | 'bitbucket' = 'github'
+) {
   const encryptedToken = await encryptAccessToken(accessToken);
 
   // Check if user exists first (to determine isNewUser)
   const existingUser = await db.query.users.findFirst({
-    where: eq(users.githubId, githubUser.githubId),
+    where: and(
+      eq(users.forgeType, forgeType),
+      eq(users.forgeUserId, vcsUser.forgeUserId)
+    ),
     columns: { id: true },
   });
 
   // Use atomic upsert with ON CONFLICT to prevent race conditions
-  // This ensures we never create duplicate users for the same githubId
+  // This ensures we never create duplicate users for the same forgeType + forgeUserId
   const [user] = await db
     .insert(users)
     .values({
-      githubId: githubUser.githubId,
-      username: githubUser.username,
-      email: githubUser.email,
-      avatarUrl: githubUser.avatarUrl,
+      forgeType,
+      forgeUserId: vcsUser.forgeUserId,
+      username: vcsUser.username,
+      email: vcsUser.email,
+      avatarUrl: vcsUser.avatarUrl,
       ...encryptedToken,
     })
     .onConflictDoUpdate({
-      target: users.githubId,
+      target: [users.forgeType, users.forgeUserId],
       set: {
-        username: githubUser.username,
-        email: githubUser.email,
-        avatarUrl: githubUser.avatarUrl,
+        username: vcsUser.username,
+        email: vcsUser.email,
+        avatarUrl: vcsUser.avatarUrl,
         ...encryptedToken,
         updatedAt: new Date(),
       },
@@ -225,7 +233,8 @@ export async function authRoutes(fastify: FastifyInstance) {
           // Web flow (direct install from GitHub Marketplace): set cookies and redirect to dashboard
           const keywayToken = generateKeywayToken({
             userId: user.id,
-            githubId: user.githubId,
+            forgeType: user.forgeType,
+            forgeUserId: user.forgeUserId,
             username: user.username,
           });
           setSessionCookies(reply, request, keywayToken);
@@ -257,7 +266,8 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (stateData.type === 'web') {
         const keywayToken = generateKeywayToken({
           userId: user.id,
-          githubId: user.githubId,
+          forgeType: user.forgeType,
+          forgeUserId: user.forgeUserId,
           username: user.username,
         });
 
@@ -530,7 +540,8 @@ export async function authRoutes(fastify: FastifyInstance) {
 
       const keywayToken = generateKeywayToken({
         userId: deviceCodeRecord.user.id,
-        githubId: deviceCodeRecord.user.githubId,
+        forgeType: deviceCodeRecord.user.forgeType,
+        forgeUserId: deviceCodeRecord.user.forgeUserId,
         username: deviceCodeRecord.user.username,
       });
 
@@ -617,9 +628,11 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.post('/token/validate', {
     preHandler: [authenticateGitHub],
   }, async (request, reply) => {
+    const vcsUser = request.vcsUser || request.githubUser;
     return sendData(reply, {
-      username: request.githubUser!.username,
-      githubId: request.githubUser!.githubId,
+      username: vcsUser!.username,
+      forgeType: vcsUser!.forgeType,
+      forgeUserId: vcsUser!.forgeUserId,
     }, { requestId: request.id });
   });
 

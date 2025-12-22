@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { authenticateGitHub } from '../../../middleware/auth';
 import { db, users } from '../../../db';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { sendPaginatedData, parsePagination, buildPaginationMeta } from '../../../lib';
 import { getActivityForUser } from '../../../services';
 
@@ -17,11 +17,14 @@ export async function activityRoutes(fastify: FastifyInstance) {
   fastify.get('/', {
     preHandler: [authenticateGitHub],
   }, async (request, reply) => {
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
     const pagination = parsePagination(request.query);
 
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     if (!user) {

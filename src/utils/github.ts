@@ -445,7 +445,7 @@ export async function getUserFromToken(accessToken: string) {
     }
 
     return {
-      githubId: user.id,
+      forgeUserId: String(user.id), // Convert to string for multi-forge support
       username: user.login,
       email,
       avatarUrl: user.avatar_url,
@@ -652,5 +652,169 @@ export async function getUserRoleWithApp(
   } catch (error) {
     logger.error({ error: error instanceof Error ? error.message : 'Unknown error', username, repoFullName }, 'getUserRoleWithApp failed');
     throw error;
+  }
+}
+
+// ============================================================================
+// Organization Functions
+// ============================================================================
+
+export interface GitHubOrgMembershipInfo {
+  state: 'active' | 'pending';
+  role: 'admin' | 'member';
+  organization: {
+    id: number;
+    login: string;
+    avatar_url: string;
+  };
+}
+
+export interface GitHubOrgMember {
+  id: number;
+  login: string;
+  avatar_url: string;
+  role: 'admin' | 'member';
+}
+
+/**
+ * Get a user's membership in a GitHub organization
+ * Uses the user's access token to check their own membership
+ */
+export async function getOrgMembership(
+  accessToken: string,
+  org: string,
+  username: string
+): Promise<GitHubOrgMembershipInfo | null> {
+  try {
+    const response = await fetch(
+      `${GITHUB_API_BASE}/orgs/${org}/memberships/${username}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        return null;
+      }
+      logger.warn(
+        { org, username, status: response.status },
+        'Failed to get org membership'
+      );
+      return null;
+    }
+
+    const data = await response.json() as {
+      state: 'active' | 'pending';
+      role: 'admin' | 'member';
+      organization: { id: number; login: string; avatar_url: string };
+    };
+    return {
+      state: data.state,
+      role: data.role,
+      organization: {
+        id: data.organization.id,
+        login: data.organization.login,
+        avatar_url: data.organization.avatar_url,
+      },
+    };
+  } catch (error) {
+    logger.error(
+      { error: error instanceof Error ? error.message : 'Unknown error', org, username },
+      'Error getting org membership'
+    );
+    return null;
+  }
+}
+
+/**
+ * List all members of a GitHub organization
+ * Requires admin access to the organization
+ */
+export async function listOrgMembers(
+  accessToken: string,
+  org: string
+): Promise<GitHubOrgMember[]> {
+  const members: GitHubOrgMember[] = [];
+  let page = 1;
+  const perPage = 100;
+
+  try {
+    while (true) {
+      const response = await fetch(
+        `${GITHUB_API_BASE}/orgs/${org}/members?per_page=${perPage}&page=${page}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        logger.warn(
+          { org, status: response.status },
+          'Failed to list org members'
+        );
+        break;
+      }
+
+      const data = await response.json() as Array<{
+        id: number;
+        login: string;
+        avatar_url: string;
+      }>;
+      if (!Array.isArray(data) || data.length === 0) {
+        break;
+      }
+
+      // Get each member's role by checking their membership
+      for (const member of data) {
+        const membership = await getOrgMembership(accessToken, org, member.login);
+        members.push({
+          id: member.id,
+          login: member.login,
+          avatar_url: member.avatar_url,
+          role: membership?.role ?? 'member',
+        });
+      }
+
+      if (data.length < perPage) {
+        break;
+      }
+      page++;
+    }
+  } catch (error) {
+    logger.error(
+      { error: error instanceof Error ? error.message : 'Unknown error', org },
+      'Error listing org members'
+    );
+  }
+
+  return members;
+}
+
+/**
+ * List all members of a GitHub organization using GitHub App token
+ * Used when syncing org members from webhook events
+ */
+export async function listOrgMembersWithApp(
+  installationId: number,
+  org: string
+): Promise<GitHubOrgMember[]> {
+  try {
+    const token = await getInstallationToken(installationId);
+    return listOrgMembers(token, org);
+  } catch (error) {
+    logger.error(
+      { error: error instanceof Error ? error.message : 'Unknown error', org, installationId },
+      'Error listing org members with app'
+    );
+    return [];
   }
 }

@@ -218,6 +218,13 @@
       "when": 1766092000000,
       "tag": "0030_add_version_value_accessed_action",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "5",
+      "when": 1766400000000,
+      "tag": "0031_add_organizations",
+      "breakpoints": true
     }
   ]
 }

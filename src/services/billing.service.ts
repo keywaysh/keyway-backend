@@ -1,10 +1,14 @@
 import Stripe from 'stripe';
 import { eq } from 'drizzle-orm';
-import { db, users, subscriptions, stripeWebhookEvents, type UserPlan } from '../db';
+import { db, users, subscriptions, stripeWebhookEvents, organizations, type UserPlan } from '../db';
 import { config } from '../config';
 import { trackEvent, identifyUser, AnalyticsEvents } from '../utils/analytics';
 import { logActivity } from './activity.service';
 import { logger } from '../utils/sharedLogger';
+import {
+  updateOrganizationPlan,
+  setOrganizationStripeCustomerId,
+} from './organization.service';
 
 // Initialize Stripe client (only if configured)
 const stripe = config.stripe
@@ -465,13 +469,27 @@ export async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
   // Handle event by type
   switch (event.type) {
     case 'customer.subscription.created':
-    case 'customer.subscription.updated':
-      await handleSubscriptionChange(event.data.object as Stripe.Subscription);
+    case 'customer.subscription.updated': {
+      const subscription = event.data.object as Stripe.Subscription;
+      // Check if this is an org subscription
+      if (subscription.metadata.keyway_org_id) {
+        await handleOrgSubscriptionChange(subscription);
+      } else {
+        await handleSubscriptionChange(subscription);
+      }
       break;
+    }
 
-    case 'customer.subscription.deleted':
-      await handleSubscriptionDeleted(event.data.object as Stripe.Subscription);
+    case 'customer.subscription.deleted': {
+      const subscription = event.data.object as Stripe.Subscription;
+      // Check if this is an org subscription
+      if (subscription.metadata.keyway_org_id) {
+        await handleOrgSubscriptionDeleted(subscription);
+      } else {
+        await handleSubscriptionDeleted(subscription);
+      }
       break;
+    }
 
     case 'invoice.payment_failed':
       await handlePaymentFailed(event.data.object as Stripe.Invoice);
@@ -499,5 +517,200 @@ export function getAvailablePrices() {
       monthly: config.stripe.prices.teamMonthly,
       yearly: config.stripe.prices.teamYearly,
     },
+  };
+}
+
+// ============================================================================
+// Organization Billing Functions
+// ============================================================================
+
+/**
+ * Get or create a Stripe customer for an organization
+ */
+export async function getOrCreateOrgStripeCustomer(
+  orgId: string,
+  orgLogin: string,
+  ownerEmail: string
+): Promise<string> {
+  const s = getStripe();
+
+  // Check if org already has a Stripe customer ID
+  const [org] = await db
+    .select({ stripeCustomerId: organizations.stripeCustomerId })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1);
+
+  if (org?.stripeCustomerId) {
+    return org.stripeCustomerId;
+  }
+
+  // Create new Stripe customer for the org
+  const customer = await s.customers.create({
+    email: ownerEmail,
+    name: `${orgLogin} (Organization)`,
+    metadata: {
+      keyway_org_id: orgId,
+      keyway_org_login: orgLogin,
+    },
+  });
+
+  // Store customer ID in database
+  await setOrganizationStripeCustomerId(orgId, customer.id);
+
+  return customer.id;
+}
+
+/**
+ * Create a Stripe Checkout session for organization subscription
+ * Note: Organizations can only subscribe to Team plan
+ */
+export async function createOrgCheckoutSession(
+  orgId: string,
+  orgLogin: string,
+  ownerEmail: string,
+  priceId: string,
+  successUrl: string,
+  cancelUrl: string
+): Promise<string> {
+  const s = getStripe();
+
+  // Validate that the price is a Team plan price
+  if (!config.stripe) {
+    throw new Error('Stripe is not configured');
+  }
+  const teamPrices = [config.stripe.prices.teamMonthly, config.stripe.prices.teamYearly];
+  if (!teamPrices.includes(priceId)) {
+    throw new Error('Organizations can only subscribe to the Team plan');
+  }
+
+  // Get or create customer
+  const customerId = await getOrCreateOrgStripeCustomer(orgId, orgLogin, ownerEmail);
+
+  // Create checkout session
+  const session = await s.checkout.sessions.create({
+    customer: customerId,
+    mode: 'subscription',
+    line_items: [
+      {
+        price: priceId,
+        quantity: 1,
+      },
+    ],
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    metadata: {
+      keyway_org_id: orgId,
+      keyway_org_login: orgLogin,
+    },
+    subscription_data: {
+      metadata: {
+        keyway_org_id: orgId,
+        keyway_org_login: orgLogin,
+      },
+    },
+  });
+
+  if (!session.url) {
+    throw new Error('Failed to create checkout session');
+  }
+
+  return session.url;
+}
+
+/**
+ * Create a Stripe Customer Portal session for organization
+ */
+export async function createOrgPortalSession(
+  orgId: string,
+  returnUrl: string
+): Promise<string> {
+  const s = getStripe();
+
+  // Get org's Stripe customer ID
+  const [org] = await db
+    .select({ stripeCustomerId: organizations.stripeCustomerId })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1);
+
+  if (!org?.stripeCustomerId) {
+    throw new Error('No billing account found for organization');
+  }
+
+  const session = await s.billingPortal.sessions.create({
+    customer: org.stripeCustomerId,
+    return_url: returnUrl,
+  });
+
+  return session.url;
+}
+
+/**
+ * Handle organization subscription change from webhook
+ */
+export async function handleOrgSubscriptionChange(
+  subscription: Stripe.Subscription
+): Promise<void> {
+  const orgId = subscription.metadata.keyway_org_id;
+  if (!orgId) {
+    // Not an org subscription
+    return;
+  }
+
+  const priceId = subscription.items.data[0]?.price.id;
+  if (!priceId) {
+    logger.warn({ subscriptionId: subscription.id }, 'Org subscription missing price');
+    return;
+  }
+
+  const plan = getPlanFromPriceId(priceId);
+  if (!plan) {
+    logger.warn({ priceId }, 'Unknown price ID for org');
+    return;
+  }
+
+  // Update organization plan
+  await updateOrganizationPlan(orgId, plan);
+  logger.info({ orgId, plan }, 'Updated organization plan');
+}
+
+/**
+ * Handle organization subscription deleted from webhook
+ */
+export async function handleOrgSubscriptionDeleted(
+  subscription: Stripe.Subscription
+): Promise<void> {
+  const orgId = subscription.metadata.keyway_org_id;
+  if (!orgId) {
+    // Not an org subscription
+    return;
+  }
+
+  // Downgrade org to free plan
+  await updateOrganizationPlan(orgId, 'free');
+  logger.info({ orgId }, 'Downgraded organization to free plan (subscription deleted)');
+}
+
+/**
+ * Get organization billing status
+ */
+export async function getOrgBillingStatus(orgId: string) {
+  const [org] = await db
+    .select({
+      plan: organizations.plan,
+      stripeCustomerId: organizations.stripeCustomerId,
+    })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1);
+
+  if (!org) {
+    return null;
+  }
+
+  return {
+    plan: org.plan,
+    hasStripeCustomer: !!org.stripeCustomerId,
   };
 }

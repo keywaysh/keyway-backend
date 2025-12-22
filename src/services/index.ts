@@ -24,6 +24,7 @@ export {
   permanentlyDeleteSecret,
   getTrashedSecrets,
   getTrashedSecretsCount,
+  getTrashedSecretById,
   restoreSecret,
   emptyTrash,
   purgeExpiredTrash,

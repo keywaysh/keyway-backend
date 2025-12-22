@@ -26,6 +26,7 @@ import { db, vaults, users } from '../../../db';
 import { eq } from 'drizzle-orm';
 import { NotFoundError, ForbiddenError, BadRequestError, PlanLimitError } from '../../../lib';
 import { getUserRoleWithApp } from '../../../utils/github';
+import { resolveEffectivePermission } from '../../../utils/permissions';
 import { logger } from '../../../utils/sharedLogger';
 import { providerConnections } from '../../../db/schema';
 import { and } from 'drizzle-orm';
@@ -118,40 +119,6 @@ async function verifyVaultAccess(username: string, owner: string, repo: string) 
   return vault;
 }
 
-// Helper to verify vault access with write permission (for sync push)
-async function verifyVaultWriteAccess(username: string, owner: string, repo: string) {
-  const repoFullName = `${owner}/${repo}`;
-  logger.debug({ username, repoFullName }, 'Verifying vault write access');
-
-  // Get user's role to check write permission (using GitHub App)
-  const role = await getUserRoleWithApp(repoFullName, username);
-
-  if (!role) {
-    logger.warn({ username, repoFullName }, 'Write access denied: user has no role on repository');
-    throw new ForbiddenError('You do not have access to this repository');
-  }
-
-  // write, maintain, admin can write
-  const canWrite = ['write', 'maintain', 'admin'].includes(role);
-  if (!canWrite) {
-    logger.warn({ username, role, repoFullName }, 'Write access denied: insufficient permissions (need write/maintain/admin)');
-    throw new ForbiddenError('You need write access to this repository to sync secrets');
-  }
-
-  logger.debug({ username, role, repoFullName }, 'Write access granted');
-
-  const vault = await db.query.vaults.findFirst({
-    where: eq(vaults.repoFullName, repoFullName),
-  });
-
-  if (!vault) {
-    logger.warn({ repoFullName }, 'Vault not found for repository');
-    throw new NotFoundError('Vault not found');
-  }
-
-  return vault;
-}
-
 export async function integrationsRoutes(fastify: FastifyInstance) {
   /**
    * GET /integrations
@@ -172,7 +139,10 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     // Get user from DB to get the UUID
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, request.githubUser!.githubId),
+      where: and(
+        eq(users.forgeType, (request.vcsUser || request.githubUser!).forgeType),
+        eq(users.forgeUserId, (request.vcsUser || request.githubUser!).forgeUserId)
+      ),
     });
 
     if (!user) {
@@ -193,7 +163,10 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
     const { id } = request.params as { id: string };
 
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, request.githubUser!.githubId),
+      where: and(
+        eq(users.forgeType, (request.vcsUser || request.githubUser!).forgeType),
+        eq(users.forgeUserId, (request.vcsUser || request.githubUser!).forgeUserId)
+      ),
     });
 
     if (!user) {
@@ -255,7 +228,10 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
 
     // Get Keyway user
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, request.githubUser!.githubId),
+      where: and(
+        eq(users.forgeType, (request.vcsUser || request.githubUser!).forgeType),
+        eq(users.forgeUserId, (request.vcsUser || request.githubUser!).forgeUserId)
+      ),
     });
 
     if (!user) {
@@ -328,7 +304,10 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
 
     // Check provider limit BEFORE redirecting to OAuth
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, request.githubUser!.githubId),
+      where: and(
+        eq(users.forgeType, (request.vcsUser || request.githubUser!).forgeType),
+        eq(users.forgeUserId, (request.vcsUser || request.githubUser!).forgeUserId)
+      ),
     });
     if (!user) {
       throw new NotFoundError('User not found');
@@ -358,10 +337,12 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
     const { url: authUrl, codeVerifier } = provider.getAuthorizationUrl('', callbackUri);
 
     // Sign state to prevent CSRF (include codeVerifier for PKCE)
+    const vcsUser = request.vcsUser || request.githubUser!;
     const state = signState({
       type: 'provider_oauth',
       provider: providerName,
-      userId: request.githubUser!.githubId,
+      forgeType: vcsUser.forgeType,
+      forgeUserId: vcsUser.forgeUserId,
       redirectUri: validatedRedirectUri,
       codeVerifier, // Store for token exchange
     });
@@ -411,7 +392,10 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
 
       // Get Keyway user
       const user = await db.query.users.findFirst({
-        where: eq(users.githubId, stateData.userId as number),
+        where: and(
+          eq(users.forgeType, stateData.forgeType as 'github' | 'gitlab' | 'bitbucket'),
+          eq(users.forgeUserId, stateData.forgeUserId as string)
+        ),
       });
 
       if (!user) {
@@ -490,7 +474,10 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
 
     // Get the authenticated user
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, request.githubUser!.githubId),
+      where: and(
+        eq(users.forgeType, (request.vcsUser || request.githubUser!).forgeType),
+        eq(users.forgeUserId, (request.vcsUser || request.githubUser!).forgeUserId)
+      ),
     });
 
     if (!user) {
@@ -520,7 +507,10 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
 
     // Get the authenticated user
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, request.githubUser!.githubId),
+      where: and(
+        eq(users.forgeType, (request.vcsUser || request.githubUser!).forgeType),
+        eq(users.forgeUserId, (request.vcsUser || request.githubUser!).forgeUserId)
+      ),
     });
 
     if (!user) {
@@ -541,11 +531,14 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
     const { owner, repo } = request.params as { owner: string; repo: string };
     const query = SyncStatusQuerySchema.parse(request.query);
 
-    const vault = await verifyVaultAccess(request.githubUser!.username, owner, repo);
+    const vault = await verifyVaultAccess((request.vcsUser || request.githubUser!).username, owner, repo);
 
     // Get the authenticated user for ownership validation
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, request.githubUser!.githubId),
+      where: and(
+        eq(users.forgeType, (request.vcsUser || request.githubUser!).forgeType),
+        eq(users.forgeUserId, (request.vcsUser || request.githubUser!).forgeUserId)
+      ),
     });
 
     if (!user) {
@@ -578,15 +571,35 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
     const { owner, repo } = request.params as { owner: string; repo: string };
     const query = SyncDiffQuerySchema.parse(request.query);
 
-    const vault = await verifyVaultAccess(request.githubUser!.username, owner, repo);
-
-    // Get the authenticated user for ownership validation
+    // Get the authenticated user first
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, request.githubUser!.githubId),
+      where: and(
+        eq(users.forgeType, (request.vcsUser || request.githubUser!).forgeType),
+        eq(users.forgeUserId, (request.vcsUser || request.githubUser!).forgeUserId)
+      ),
     });
 
     if (!user) {
       throw new NotFoundError('User not found');
+    }
+
+    const vault = await verifyVaultAccess((request.vcsUser || request.githubUser!).username, owner, repo);
+
+    // Check environment-level read permission for the Keyway environment
+    const role = await getUserRoleWithApp(`${owner}/${repo}`, (request.vcsUser || request.githubUser!).username);
+    if (role) {
+      const hasReadPermission = await resolveEffectivePermission(
+        vault.id,
+        query.keywayEnvironment,
+        user.id,
+        role,
+        'read'
+      );
+      if (!hasReadPermission) {
+        throw new ForbiddenError(
+          `Your role (${role}) does not have permission to read secrets from the "${query.keywayEnvironment}" environment`
+        );
+      }
     }
 
     // For Railway: append serviceId to providerEnvironment (format: "production:serviceId")
@@ -616,15 +629,38 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
     const { owner, repo } = request.params as { owner: string; repo: string };
     const query = SyncPreviewQuerySchema.parse(request.query);
 
-    const vault = await verifyVaultAccess(request.githubUser!.username, owner, repo);
-
-    // Get the authenticated user for ownership validation
+    // Get the authenticated user first
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, request.githubUser!.githubId),
+      where: and(
+        eq(users.forgeType, (request.vcsUser || request.githubUser!).forgeType),
+        eq(users.forgeUserId, (request.vcsUser || request.githubUser!).forgeUserId)
+      ),
     });
 
     if (!user) {
       throw new NotFoundError('User not found');
+    }
+
+    const vault = await verifyVaultAccess((request.vcsUser || request.githubUser!).username, owner, repo);
+
+    // Check environment-level permission for the Keyway environment
+    // Push requires write, pull requires read
+    const role = await getUserRoleWithApp(`${owner}/${repo}`, (request.vcsUser || request.githubUser!).username);
+    if (role) {
+      const permissionType = query.direction === 'push' ? 'write' : 'read';
+      const hasPermission = await resolveEffectivePermission(
+        vault.id,
+        query.keywayEnvironment,
+        user.id,
+        role,
+        permissionType
+      );
+      if (!hasPermission) {
+        const action = permissionType === 'write' ? 'write to' : 'read from';
+        throw new ForbiddenError(
+          `Your role (${role}) does not have permission to ${action} the "${query.keywayEnvironment}" environment`
+        );
+      }
     }
 
     // For Railway: append serviceId to providerEnvironment (format: "production:serviceId")
@@ -657,20 +693,37 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
     const body = SyncBodySchema.parse(request.body);
 
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, request.githubUser!.githubId),
+      where: and(
+        eq(users.forgeType, (request.vcsUser || request.githubUser!).forgeType),
+        eq(users.forgeUserId, (request.vcsUser || request.githubUser!).forgeUserId)
+      ),
     });
 
     if (!user) {
       throw new NotFoundError('User not found');
     }
 
-    // For push operations, require write access to the repository
-    // For pull operations, read access is sufficient
-    let vault;
-    if (body.direction === 'push') {
-      vault = await verifyVaultWriteAccess(request.githubUser!.username, owner, repo);
-    } else {
-      vault = await verifyVaultAccess(request.githubUser!.username, owner, repo);
+    // Verify vault access first
+    const vault = await verifyVaultAccess((request.vcsUser || request.githubUser!).username, owner, repo);
+
+    // Check environment-level permission for the Keyway environment
+    // Push requires write, pull requires write (to modify local secrets from provider)
+    const role = await getUserRoleWithApp(`${owner}/${repo}`, (request.vcsUser || request.githubUser!).username);
+    if (role) {
+      const permissionType = body.direction === 'push' ? 'read' : 'write';
+      const hasPermission = await resolveEffectivePermission(
+        vault.id,
+        body.keywayEnvironment,
+        user.id,
+        role,
+        permissionType
+      );
+      if (!hasPermission) {
+        const action = permissionType === 'write' ? 'write to' : 'read from';
+        throw new ForbiddenError(
+          `Your role (${role}) does not have permission to ${action} the "${body.keywayEnvironment}" environment`
+        );
+      }
     }
 
     // Verify the connection belongs to the authenticated user

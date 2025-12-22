@@ -7,7 +7,8 @@ import { vi } from 'vitest';
  */
 export const mockUser = {
   id: 'test-user-id-123',
-  githubId: 12345,
+  forgeType: 'github' as const,
+  forgeUserId: '12345',
   username: 'testuser',
   email: 'test@example.com',
   avatarUrl: 'https://github.com/testuser.png',
@@ -33,6 +34,7 @@ export const mockFreeUser = {
  */
 export const mockVault = {
   id: 'test-vault-id-123',
+  forgeType: 'github' as const,
   repoOwner: 'testuser',
   repoName: 'test-repo',
   repoFullName: 'testuser/test-repo',
@@ -194,7 +196,8 @@ export function createMockGitHubUtils() {
     exchangeCodeForToken: vi.fn().mockResolvedValue(mockGitHubResponses.accessToken),
     getGitHubUser: vi.fn().mockResolvedValue(mockGitHubResponses.user),
     getUserFromToken: vi.fn().mockResolvedValue({
-      githubId: mockGitHubResponses.user.id,
+      forgeType: 'github' as const,
+      forgeUserId: String(mockGitHubResponses.user.id),
       username: mockGitHubResponses.user.login,
       email: mockGitHubResponses.user.email,
       avatarUrl: mockGitHubResponses.user.avatar_url,

@@ -10,7 +10,8 @@ import {
 describe('JWT Utils (Security Critical)', () => {
   const validPayload: KeywayTokenPayload = {
     userId: 'user-123',
-    githubId: 12345,
+    forgeType: 'github',
+    forgeUserId: '12345',
     username: 'testuser',
   };
 
@@ -28,7 +29,8 @@ describe('JWT Utils (Security Critical)', () => {
       const decoded = jwt.decode(token) as jwt.JwtPayload;
 
       expect(decoded.userId).toBe(validPayload.userId);
-      expect(decoded.githubId).toBe(validPayload.githubId);
+      expect(decoded.forgeType).toBe(validPayload.forgeType);
+      expect(decoded.forgeUserId).toBe(validPayload.forgeUserId);
       expect(decoded.username).toBe(validPayload.username);
     });
 
@@ -64,7 +66,8 @@ describe('JWT Utils (Security Critical)', () => {
       const decoded2 = jwt.decode(token2) as jwt.JwtPayload;
 
       expect(decoded1.userId).toBe(decoded2.userId);
-      expect(decoded1.githubId).toBe(decoded2.githubId);
+      expect(decoded1.forgeType).toBe(decoded2.forgeType);
+      expect(decoded1.forgeUserId).toBe(decoded2.forgeUserId);
       expect(decoded1.username).toBe(decoded2.username);
     });
   });
@@ -75,7 +78,8 @@ describe('JWT Utils (Security Critical)', () => {
       const decoded = verifyKeywayToken(token);
 
       expect(decoded.userId).toBe(validPayload.userId);
-      expect(decoded.githubId).toBe(validPayload.githubId);
+      expect(decoded.forgeType).toBe(validPayload.forgeType);
+      expect(decoded.forgeUserId).toBe(validPayload.forgeUserId);
       expect(decoded.username).toBe(validPayload.username);
     });
 

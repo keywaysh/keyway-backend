@@ -98,11 +98,11 @@ const mockRepoEntry = {
 vi.mock('../src/db', () => ({
   db: {
     query: {
-      githubAppInstallations: {
+      vcsAppInstallations: {
         findFirst: vi.fn(),
         findMany: vi.fn(),
       },
-      githubAppInstallationRepos: {
+      vcsAppInstallationRepos: {
         findFirst: vi.fn(),
       },
     },
@@ -123,9 +123,9 @@ vi.mock('../src/db', () => ({
       where: vi.fn().mockResolvedValue(undefined),
     }),
   },
-  githubAppInstallations: { installationId: 'installationId' },
-  githubAppInstallationRepos: { repoFullName: 'repoFullName' },
-  githubAppInstallationTokens: { installationId: 'installationId' },
+  vcsAppInstallations: { installationId: 'installationId' },
+  vcsAppInstallationRepos: { repoFullName: 'repoFullName' },
+  vcsAppInstallationTokens: { installationId: 'installationId' },
 }));
 
 // Mock encryption service
@@ -223,7 +223,7 @@ describe('GitHub App Service', () => {
   describe('getInstallationToken', () => {
     it('should return cached token if valid', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(mockInstallationWithCache);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(mockInstallationWithCache);
 
       const { getInstallationToken } = await import('../src/services/github-app.service');
 
@@ -235,7 +235,7 @@ describe('GitHub App Service', () => {
 
     it('should fetch new token if cache is expired', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(mockExpiredTokenCache);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(mockExpiredTokenCache);
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -258,7 +258,7 @@ describe('GitHub App Service', () => {
 
     it('should fetch new token if no cache exists', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(mockInstallation);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(mockInstallation);
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -278,7 +278,7 @@ describe('GitHub App Service', () => {
 
     it('should throw NotFoundError if installation does not exist', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(null);
 
       const { getInstallationToken } = await import('../src/services/github-app.service');
 
@@ -287,7 +287,7 @@ describe('GitHub App Service', () => {
 
     it('should throw error if GitHub API fails', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(mockInstallation);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(mockInstallation);
 
       mockFetch.mockResolvedValueOnce({
         ok: false,
@@ -311,7 +311,7 @@ describe('GitHub App Service', () => {
           expiresAt: new Date(Date.now() + 4 * 60 * 1000), // 4 minutes from now
         },
       };
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(almostExpiredCache);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(almostExpiredCache);
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -333,7 +333,7 @@ describe('GitHub App Service', () => {
   describe('findInstallationForRepo', () => {
     it('should find installation by repo entry (selected repos)', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallationRepos.findFirst as any).mockResolvedValue(mockRepoEntry);
+      (db.query.vcsAppInstallationRepos.findFirst as any).mockResolvedValue(mockRepoEntry);
 
       const { findInstallationForRepo } = await import('../src/services/github-app.service');
 
@@ -344,13 +344,13 @@ describe('GitHub App Service', () => {
 
     it('should find installation by account for "all repos" selection', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallationRepos.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallationRepos.findFirst as any).mockResolvedValue(null);
 
       const allReposInstallation = {
         ...mockInstallation,
         repositorySelection: 'all' as const,
       };
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(allReposInstallation);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(allReposInstallation);
 
       const { findInstallationForRepo } = await import('../src/services/github-app.service');
 
@@ -361,8 +361,8 @@ describe('GitHub App Service', () => {
 
     it('should return null if no installation found', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallationRepos.findFirst as any).mockResolvedValue(null);
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallationRepos.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(null);
 
       const { findInstallationForRepo } = await import('../src/services/github-app.service');
 
@@ -380,8 +380,8 @@ describe('GitHub App Service', () => {
           status: 'suspended' as const,
         },
       };
-      (db.query.githubAppInstallationRepos.findFirst as any).mockResolvedValue(suspendedRepoEntry);
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallationRepos.findFirst as any).mockResolvedValue(suspendedRepoEntry);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(null);
 
       const { findInstallationForRepo } = await import('../src/services/github-app.service');
 
@@ -392,8 +392,8 @@ describe('GitHub App Service', () => {
 
     it('should find installation via GitHub API when DB lookup fails', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallationRepos.findFirst as any).mockResolvedValue(null);
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallationRepos.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(null);
 
       // Mock GitHub API response
       const mockApiResponse = {
@@ -427,8 +427,8 @@ describe('GitHub App Service', () => {
 
     it('should return null when GitHub API returns 404', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallationRepos.findFirst as any).mockResolvedValue(null);
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallationRepos.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(null);
 
       // Mock GitHub API 404 response
       global.fetch = vi.fn().mockResolvedValue({
@@ -445,8 +445,8 @@ describe('GitHub App Service', () => {
 
     it('should sync installation to DB when found via API', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallationRepos.findFirst as any).mockResolvedValue(null);
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallationRepos.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(null);
 
       // Mock GitHub API response
       const mockApiResponse = {
@@ -472,7 +472,7 @@ describe('GitHub App Service', () => {
   describe('checkInstallationStatus', () => {
     it('should return installed: true when installation exists', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallationRepos.findFirst as any).mockResolvedValue(mockRepoEntry);
+      (db.query.vcsAppInstallationRepos.findFirst as any).mockResolvedValue(mockRepoEntry);
 
       const { checkInstallationStatus } = await import('../src/services/github-app.service');
 
@@ -485,8 +485,8 @@ describe('GitHub App Service', () => {
 
     it('should return installed: false when no installation', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallationRepos.findFirst as any).mockResolvedValue(null);
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallationRepos.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(null);
 
       // Mock GitHub API to return 404 (app not installed)
       global.fetch = vi.fn().mockResolvedValue({
@@ -507,8 +507,8 @@ describe('GitHub App Service', () => {
   describe('assertRepoAccessViaApp', () => {
     it('should return installation info when app is installed', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallationRepos.findFirst as any).mockResolvedValue(mockRepoEntry);
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(mockInstallationWithCache);
+      (db.query.vcsAppInstallationRepos.findFirst as any).mockResolvedValue(mockRepoEntry);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(mockInstallationWithCache);
 
       const { assertRepoAccessViaApp } = await import('../src/services/github-app.service');
 
@@ -520,8 +520,8 @@ describe('GitHub App Service', () => {
 
     it('should throw ForbiddenError when app is not installed', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallationRepos.findFirst as any).mockResolvedValue(null);
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallationRepos.findFirst as any).mockResolvedValue(null);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(null);
 
       // Mock GitHub API to return 404 (app not installed)
       global.fetch = vi.fn().mockResolvedValue({
@@ -562,7 +562,7 @@ describe('GitHub App Service', () => {
   describe('deleteInstallation', () => {
     it('should mark installation as deleted and clear token cache', async () => {
       const { db } = await import('../src/db');
-      (db.query.githubAppInstallations.findFirst as any).mockResolvedValue(mockInstallation);
+      (db.query.vcsAppInstallations.findFirst as any).mockResolvedValue(mockInstallation);
 
       const { deleteInstallation } = await import('../src/services/github-app.service');
 

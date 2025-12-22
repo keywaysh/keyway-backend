@@ -14,6 +14,7 @@
     "test:coverage": "vitest run --coverage",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
+    "db:migrate-orgs": "tsx scripts/migrate-organizations.ts",
     "validate": "bash scripts/pre-push.sh",
     "deploy:check": "pnpm run type-check && pnpm run build"
   },

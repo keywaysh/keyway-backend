@@ -6,7 +6,8 @@ import { createTestApp } from '../helpers/testApp';
 const { mockUser, mockVault, mockConnection, createMockDbWithConnections, createMockGitHubUtilsForTest } = vi.hoisted(() => {
   const mockUser = {
     id: 'test-user-id-123',
-    githubId: 12345,
+    forgeType: 'github' as const,
+    forgeUserId: '12345',
     username: 'testuser',
     email: 'test@example.com',
     avatarUrl: 'https://github.com/testuser.png',
@@ -128,7 +129,8 @@ const { mockUser, mockVault, mockConnection, createMockDbWithConnections, create
       avatar_url: 'https://github.com/testuser.png',
     }),
     getUserFromToken: vi.fn().mockResolvedValue({
-      githubId: 12345,
+      forgeType: 'github' as const,
+      forgeUserId: '12345',
       username: 'testuser',
       email: 'test@example.com',
       avatarUrl: 'https://github.com/testuser.png',
@@ -151,7 +153,7 @@ const { mockUser, mockVault, mockConnection, createMockDbWithConnections, create
 vi.mock('../../src/db', () => {
   return {
     db: createMockDbWithConnections(),
-    users: { id: 'id', githubId: 'githubId' },
+    users: { id: 'id', forgeType: 'forgeType', forgeUserId: 'forgeUserId' },
     vaults: { id: 'id', repoFullName: 'repoFullName' },
     secrets: { id: 'id', vaultId: 'vaultId', environment: 'environment' },
     providerConnections: { id: 'id', userId: 'userId', provider: 'provider', providerTeamId: 'providerTeamId' },
@@ -166,12 +168,14 @@ vi.mock('../../src/utils/github', () => createMockGitHubUtilsForTest());
 // Mock auth middleware (using done callback for Fastify preHandler)
 vi.mock('../../src/middleware/auth', () => ({
   authenticateGitHub: vi.fn((request: any, _reply: any, done: any) => {
-    request.githubUser = {
-      githubId: mockUser.githubId,
+    request.vcsUser = {
+      forgeType: mockUser.forgeType,
+      forgeUserId: mockUser.forgeUserId,
       username: mockUser.username,
       email: mockUser.email,
       avatarUrl: mockUser.avatarUrl,
     };
+    request.githubUser = request.vcsUser; // Backward compatibility
     request.accessToken = 'test-token';
     done();
   }),
@@ -194,7 +198,7 @@ vi.mock('../../src/utils/state', () => ({
   verifyState: vi.fn().mockReturnValue({
     type: 'provider_oauth',
     provider: 'vercel',
-    userId: mockUser.githubId,
+    userId: mockUser.id,
     redirectUri: null,
     // Integration OAuth doesn't use PKCE
   }),

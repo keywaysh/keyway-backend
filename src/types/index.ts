@@ -29,7 +29,8 @@ export const environmentNameSchema = z.string().regex(ENVIRONMENT_NAME_PATTERN, 
 // User schemas
 export const UserSchema = z.object({
   id: z.string(),
-  githubId: z.number(),
+  forgeType: z.enum(['github', 'gitlab', 'bitbucket']),
+  forgeUserId: z.string(),
   username: z.string(),
   email: z.string().email().nullable(),
   avatarUrl: z.string().nullable(),
@@ -199,7 +200,8 @@ export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 // GET /api/me - User profile response
 export const UserProfileResponseSchema = z.object({
   id: z.string().uuid().nullable(), // null if user hasn't created any vault yet
-  githubId: z.number(),
+  forgeType: z.enum(['github', 'gitlab', 'bitbucket']),
+  forgeUserId: z.string(),
   username: z.string(),
   email: z.string().nullable(),
   avatarUrl: z.string().nullable(),

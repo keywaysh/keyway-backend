@@ -437,6 +437,29 @@ export async function getTrashedSecretsCount(vaultId: string): Promise<number> {
 }
 
 /**
+ * Get a trashed secret by ID (for permission checks before restore)
+ * Returns null if secret not found or not in trash
+ */
+export async function getTrashedSecretById(
+  secretId: string,
+  vaultId: string
+): Promise<{ id: string; key: string; environment: string } | null> {
+  const secret = await db.query.secrets.findFirst({
+    where: and(eq(secrets.id, secretId), eq(secrets.vaultId, vaultId), isNotNull(secrets.deletedAt)),
+  });
+
+  if (!secret) {
+    return null;
+  }
+
+  return {
+    id: secret.id,
+    key: secret.key,
+    environment: secret.environment,
+  };
+}
+
+/**
  * Restore a secret from trash
  * Returns null if secret not found or not in trash
  * Throws error if key+environment already exists

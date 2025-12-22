@@ -52,12 +52,19 @@ vi.mock('../../src/db', () => ({
       deviceCodes: {
         findFirst: vi.fn(),
       },
-      githubAppInstallations: {
+      vcsAppInstallations: {
         findFirst: vi.fn(),
         findMany: vi.fn(),
       },
-      githubAppInstallationRepos: {
+      vcsAppInstallationRepos: {
         findFirst: vi.fn(),
+      },
+      organizations: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+      organizationMembers: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
       },
       usageMetrics: {
         findFirst: vi.fn().mockResolvedValue(null),
@@ -93,15 +100,17 @@ vi.mock('../../src/db', () => ({
       }),
     }),
   },
-  users: { id: 'id', githubId: 'githubId' },
-  vaults: { id: 'id', repoFullName: 'repoFullName', ownerId: 'ownerId', isPrivate: 'isPrivate' },
+  users: { id: 'id', forgeType: 'forgeType', forgeUserId: 'forgeUserId' },
+  vaults: { id: 'id', forgeType: 'forgeType', repoFullName: 'repoFullName', ownerId: 'ownerId', isPrivate: 'isPrivate' },
   secrets: { id: 'id', vaultId: 'vaultId', deletedAt: 'deletedAt' },
   deviceCodes: { id: 'id' },
-  githubAppInstallations: { installationId: 'installationId', accountLogin: 'accountLogin' },
-  githubAppInstallationRepos: { repoFullName: 'repoFullName' },
+  vcsAppInstallations: { installationId: 'installationId', accountLogin: 'accountLogin' },
+  vcsAppInstallationRepos: { repoFullName: 'repoFullName' },
   activityLogs: { id: 'id' },
   usageMetrics: { userId: 'userId' },
   vaultEnvironments: { vaultId: 'vaultId' },
+  organizations: { id: 'id', forgeType: 'forgeType', forgeOrgId: 'forgeOrgId', login: 'login' },
+  organizationMembers: { id: 'id', orgId: 'orgId', userId: 'userId' },
 }));
 
 // Mock GitHub utils - includes getUserRoleWithApp
@@ -148,7 +157,8 @@ vi.mock('../../src/utils/tokenEncryption', () => ({
 vi.mock('../../src/utils/jwt', () => ({
   verifyKeywayToken: vi.fn().mockReturnValue({
     userId: mockUser.id,
-    githubId: mockUser.githubId,
+    forgeType: mockUser.forgeType,
+    forgeUserId: mockUser.forgeUserId,
     username: mockUser.username,
   }),
   generateKeywayToken: vi.fn().mockReturnValue('mock-keyway-token'),
@@ -182,6 +192,8 @@ vi.mock('../../src/services/vault.service', () => ({
 vi.mock('../../src/utils/permissions', () => ({
   getVaultPermissions: vi.fn().mockResolvedValue([]),
   getDefaultPermission: vi.fn().mockReturnValue('read'),
+  resolveEffectivePermission: vi.fn().mockResolvedValue(true),
+  getEffectivePermissions: vi.fn().mockResolvedValue({ development: { read: true, write: true } }),
 }));
 
 // Mock config/plans
@@ -281,6 +293,7 @@ vi.mock('../../src/services', () => ({
   updateSecret: vi.fn().mockResolvedValue({ id: 'secret-id' }),
   deleteSecret: vi.fn().mockResolvedValue(undefined),
   secretExists: vi.fn().mockResolvedValue(false),
+  getSecretById: vi.fn().mockResolvedValue({ id: 'secret-123', name: 'API_KEY', environment: 'development' }),
   getSecretValue: vi.fn().mockResolvedValue({
     value: 'postgres://user:password@localhost:5432/db',
     preview: 'post••••2/db',
@@ -315,6 +328,15 @@ vi.mock('../../src/services', () => ({
     }]);
   }),
   getTrashedSecretsCount: vi.fn().mockResolvedValue(1),
+  getTrashedSecretById: vi.fn().mockImplementation((secretId, vaultId) => {
+    if (secretId === mockTrashedSecret.id) {
+      return Promise.resolve(mockTrashedSecret);
+    }
+    if (secretId === 'conflict-secret-id') {
+      return Promise.resolve({ ...mockTrashedSecret, id: 'conflict-secret-id', key: 'EXISTING_KEY' });
+    }
+    return Promise.resolve(null);
+  }),
   restoreSecret: vi.fn().mockImplementation((secretId) => {
     if (secretId === mockTrashedSecret.id) {
       return Promise.resolve({
@@ -410,7 +432,9 @@ describe('Trash Routes', () => {
 
     it('should require write access', async () => {
       const { getUserRoleWithApp } = await import('../../src/utils/github');
+      const { resolveEffectivePermission } = await import('../../src/utils/permissions');
       (getUserRoleWithApp as any).mockResolvedValueOnce('read');
+      (resolveEffectivePermission as any).mockResolvedValueOnce(false);
 
       const response = await app.inject({
         method: 'DELETE',
@@ -513,7 +537,9 @@ describe('Trash Routes', () => {
 
     it('should require write access', async () => {
       const { getUserRoleWithApp } = await import('../../src/utils/github');
+      const { resolveEffectivePermission } = await import('../../src/utils/permissions');
       (getUserRoleWithApp as any).mockResolvedValueOnce('read');
+      (resolveEffectivePermission as any).mockResolvedValueOnce(false);
 
       const response = await app.inject({
         method: 'POST',
@@ -555,7 +581,9 @@ describe('Trash Routes', () => {
 
     it('should require write access', async () => {
       const { getUserRoleWithApp } = await import('../../src/utils/github');
+      const { resolveEffectivePermission } = await import('../../src/utils/permissions');
       (getUserRoleWithApp as any).mockResolvedValueOnce('read');
+      (resolveEffectivePermission as any).mockResolvedValueOnce(false);
 
       const response = await app.inject({
         method: 'DELETE',

@@ -1,9 +1,10 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authenticateGitHub, requireAdminAccess } from '../../../middleware/auth';
-import { db, users, vaults, secrets, environmentPermissions } from '../../../db';
+import { db, users, vaults, secrets, environmentPermissions, organizations } from '../../../db';
+import { getOrganizationByLogin } from '../../../services/organization.service';
 import { eq, and } from 'drizzle-orm';
-import { getVaultPermissions, getDefaultPermission } from '../../../utils/permissions';
+import { getVaultPermissions, getDefaultPermission, resolveEffectivePermission } from '../../../utils/permissions';
 import type { CollaboratorRole } from '../../../db/schema';
 import { sendData, sendPaginatedData, sendCreated, sendNoContent, NotFoundError, ForbiddenError, ConflictError, PlanLimitError, buildPaginationMeta, parsePagination } from '../../../lib';
 import { canCreateEnvironment, canCreateSecret } from '../../../config/plans';
@@ -30,6 +31,7 @@ import {
   trashSecret,
   getTrashedSecrets,
   getTrashedSecretsCount,
+  getTrashedSecretById,
   restoreSecret,
   permanentlyDeleteSecret,
   emptyTrash,
@@ -118,12 +120,15 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   fastify.get('/', {
     preHandler: [authenticateGitHub],
   }, async (request, reply) => {
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
     const pagination = parsePagination(request.query);
 
     // Get user from database
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     if (!user) {
@@ -132,7 +137,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       });
     }
 
-    const vaultList = await getVaultsForUser(user.id, githubUser.username, user.plan);
+    const vaultList = await getVaultsForUser(user.id, vcsUser.username, user.plan);
 
     // Apply pagination (in-memory for now, could be optimized)
     const paginatedVaults = vaultList.slice(pagination.offset, pagination.offset + pagination.limit);
@@ -153,7 +158,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     preHandler: [authenticateGitHub, requireAdminAccess],
   }, async (request, reply) => {
     const body = CreateVaultSchema.parse(request.body);
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     // Get repo info from GitHub App to determine visibility
     const repoInfo = await getRepoInfoWithApp(body.repoFullName);
@@ -163,7 +168,10 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
 
     // Get user from database - must exist from auth flow
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     if (!user) {
@@ -185,12 +193,17 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       throw new ConflictError('Vault already exists for this repository');
     }
 
-    // Create vault with visibility info
+    // Check if repo owner is an organization and get its ID
+    const repoOwner = body.repoFullName.split('/')[0];
+    const org = await getOrganizationByLogin(repoOwner);
+
+    // Create vault with visibility info and org association
     const [vault] = await db
       .insert(vaults)
       .values({
         repoFullName: body.repoFullName,
         ownerId: user.id,
+        orgId: org?.id ?? null,
         isPrivate: repoInfo.isPrivate,
         environments: [...DEFAULT_ENVIRONMENTS],
       })
@@ -236,17 +249,20 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     // Get user to determine plan for isReadOnly calculation
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
 
     // Default to 'free' plan if user not found (shouldn't happen but safe fallback)
     const userPlan = user?.plan ?? 'free';
 
-    const { vault, hasAccess } = await getVaultByRepo(repoFullName, githubUser.username, userPlan);
+    const { vault, hasAccess } = await getVaultByRepo(repoFullName, vcsUser.username, userPlan);
 
     if (!vault || !hasAccess) {
       throw new NotFoundError(`Vault '${repoFullName}' not found or you don't have access`);
@@ -264,7 +280,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     fastify.log.info({ repoFullName }, 'Deleting vault - step 1: finding vault');
 
@@ -276,7 +292,10 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     fastify.log.info({ repoFullName, vaultId: vault.id }, 'Deleting vault - step 2: finding user');
 
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
     if (!user) {
       throw new ForbiddenError('User not found in database');
@@ -325,7 +344,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
     const pagination = parsePagination(request.query);
 
     const vault = await getVaultByRepoInternal(repoFullName);
@@ -333,7 +352,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       throw new NotFoundError('Vault not found');
     }
 
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
     if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
@@ -365,28 +384,42 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const params = request.params as { owner: string; repo: string };
     const repoFullName = `${params.owner}/${params.repo}`;
     const body = UpsertSecretSchema.parse(request.body);
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    // Check GitHub write permission using GitHub App (write, maintain, or admin)
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
-    if (!role) {
-      throw new ForbiddenError('You do not have access to this vault');
-    }
-    const canWriteGitHub = ['write', 'maintain', 'admin'].includes(role);
-    if (!canWriteGitHub) {
-      throw new ForbiddenError('You need write access to this repository to create or update secrets');
-    }
-
+    // Get user from database first (needed for permission resolution)
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
     if (!user) {
       throw new ForbiddenError('User not found in database');
+    }
+
+    // Check GitHub role using GitHub App
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
+    if (!role) {
+      throw new ForbiddenError('You do not have access to this vault');
+    }
+
+    // Check environment-level write permission (uses override system)
+    const hasWritePermission = await resolveEffectivePermission(
+      vault.id,
+      body.environment,
+      user.id,
+      role,
+      'write'
+    );
+    if (!hasWritePermission) {
+      throw new ForbiddenError(
+        `Your role (${role}) does not have permission to write to the "${body.environment}" environment`
+      );
     }
 
     // Check plan limit for write access (soft limit for downgraded users)
@@ -449,28 +482,48 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const params = request.params as { owner: string; repo: string; secretId: string };
     const repoFullName = `${params.owner}/${params.repo}`;
     const body = PatchSecretSchema.parse(request.body);
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    // Check GitHub write permission using GitHub App (write, maintain, or admin)
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
-    if (!role) {
-      throw new ForbiddenError('You do not have access to this vault');
-    }
-    const canWriteGitHub = ['write', 'maintain', 'admin'].includes(role);
-    if (!canWriteGitHub) {
-      throw new ForbiddenError('You need write access to this repository to update secrets');
-    }
-
+    // Get user from database first (needed for permission resolution)
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
     if (!user) {
       throw new ForbiddenError('User not found in database');
+    }
+
+    // Check GitHub role using GitHub App
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
+    if (!role) {
+      throw new ForbiddenError('You do not have access to this vault');
+    }
+
+    // Get the existing secret to check its environment for permission
+    const existingSecret = await getSecretById(params.secretId, vault.id);
+    if (!existingSecret) {
+      throw new NotFoundError('Secret not found');
+    }
+
+    // Check environment-level write permission (uses override system)
+    const hasWritePermission = await resolveEffectivePermission(
+      vault.id,
+      existingSecret.environment,
+      user.id,
+      role,
+      'write'
+    );
+    if (!hasWritePermission) {
+      throw new ForbiddenError(
+        `Your role (${role}) does not have permission to write to the "${existingSecret.environment}" environment`
+      );
     }
 
     // Check plan limit for write access (soft limit for downgraded users)
@@ -511,28 +564,48 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string; secretId: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    // Check GitHub write permission using GitHub App (write, maintain, or admin)
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
-    if (!role) {
-      throw new ForbiddenError('You do not have access to this vault');
-    }
-    const canWriteGitHub = ['write', 'maintain', 'admin'].includes(role);
-    if (!canWriteGitHub) {
-      throw new ForbiddenError('You need write access to this repository to delete secrets');
-    }
-
+    // Get user from database first (needed for permission resolution)
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
     if (!user) {
       throw new ForbiddenError('User not found in database');
+    }
+
+    // Check GitHub role using GitHub App
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
+    if (!role) {
+      throw new ForbiddenError('You do not have access to this vault');
+    }
+
+    // Get the existing secret to check its environment for permission
+    const existingSecret = await getSecretById(params.secretId, vault.id);
+    if (!existingSecret) {
+      throw new NotFoundError('Secret not found');
+    }
+
+    // Check environment-level write permission (uses override system)
+    const hasWritePermission = await resolveEffectivePermission(
+      vault.id,
+      existingSecret.environment,
+      user.id,
+      role,
+      'write'
+    );
+    if (!hasWritePermission) {
+      throw new ForbiddenError(
+        `Your role (${role}) does not have permission to write to the "${existingSecret.environment}" environment`
+      );
     }
 
     // Check plan limit for write access (soft limit for downgraded users)
@@ -592,29 +665,49 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string; secretId: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    // Check GitHub read permission
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    // Get user from database first (needed for permission resolution)
+    const user = await db.query.users.findFirst({
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
+    });
+    if (!user) {
+      throw new ForbiddenError('User not found in database');
+    }
+
+    // Check GitHub role using GitHub App
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
     if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
 
-    // Get the secret value
+    // Get the secret to check its environment for permission
     const secretData = await getSecretValue(params.secretId, vault.id);
     if (!secretData) {
       throw new NotFoundError('Secret not found');
     }
 
-    // Get user for logging
-    const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
-    });
+    // Check environment-level read permission (uses override system)
+    const hasReadPermission = await resolveEffectivePermission(
+      vault.id,
+      secretData.environment,
+      user.id,
+      role,
+      'read'
+    );
+    if (!hasReadPermission) {
+      throw new ForbiddenError(
+        `Your role (${role}) does not have permission to read secrets from the "${secretData.environment}" environment`
+      );
+    }
 
     if (user) {
       await logActivity({
@@ -651,14 +744,14 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string; secretId: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
     if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
@@ -691,14 +784,25 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string; secretId: string; versionId: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    // Get user from database first (needed for permission resolution)
+    const user = await db.query.users.findFirst({
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
+    });
+    if (!user) {
+      throw new ForbiddenError('User not found in database');
+    }
+
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
     if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
@@ -709,31 +813,40 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       throw new NotFoundError('Secret not found');
     }
 
+    // Check environment-level read permission (uses override system)
+    const hasReadPermission = await resolveEffectivePermission(
+      vault.id,
+      secret.environment,
+      user.id,
+      role,
+      'read'
+    );
+    if (!hasReadPermission) {
+      throw new ForbiddenError(
+        `Your role (${role}) does not have permission to read secrets from the "${secret.environment}" environment`
+      );
+    }
+
     const versionData = await getSecretVersionValue(params.versionId, params.secretId, vault.id);
     if (!versionData) {
       throw new NotFoundError('Version not found');
     }
 
     // Log version value access
-    const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+    await logActivity({
+      userId: user.id,
+      action: 'secret_version_value_accessed',
+      platform: detectPlatform(request),
+      vaultId: vault.id,
+      metadata: {
+        secretId: params.secretId,
+        versionId: params.versionId,
+        versionNumber: versionData.versionNumber,
+        key: secret.key,
+        repoFullName: vault.repoFullName,
+      },
+      ...extractRequestInfo(request),
     });
-    if (user) {
-      await logActivity({
-        userId: user.id,
-        action: 'secret_version_value_accessed',
-        platform: detectPlatform(request),
-        vaultId: vault.id,
-        metadata: {
-          secretId: params.secretId,
-          versionId: params.versionId,
-          versionNumber: versionData.versionNumber,
-          key: secret.key,
-          repoFullName: vault.repoFullName,
-        },
-        ...extractRequestInfo(request),
-      });
-    }
 
     return sendData(reply, versionData, { requestId: request.id });
   });
@@ -747,20 +860,28 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string; secretId: string; versionId: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    // Check write permission
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    // Get user from database first (needed for permission resolution)
+    const user = await db.query.users.findFirst({
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
+    });
+    if (!user) {
+      throw new ForbiddenError('User not found in database');
+    }
+
+    // Check GitHub role
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
     if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
-    }
-    if (!['write', 'maintain', 'admin'].includes(role)) {
-      throw new ForbiddenError('You need write access to restore versions');
     }
 
     // Verify secret exists and belongs to this vault
@@ -769,11 +890,18 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       throw new NotFoundError('Secret not found');
     }
 
-    const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
-    });
-    if (!user) {
-      throw new ForbiddenError('User not found');
+    // Check environment-level write permission (uses override system)
+    const hasWritePermission = await resolveEffectivePermission(
+      vault.id,
+      secret.environment,
+      user.id,
+      role,
+      'write'
+    );
+    if (!hasWritePermission) {
+      throw new ForbiddenError(
+        `Your role (${role}) does not have permission to write to the "${secret.environment}" environment`
+      );
     }
 
     // Check plan limit for write access (soft limit for downgraded users)
@@ -820,7 +948,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
     const pagination = parsePagination(request.query);
 
     const vault = await getVaultByRepoInternal(repoFullName);
@@ -828,7 +956,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       throw new NotFoundError('Vault not found');
     }
 
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
     if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
@@ -858,28 +986,48 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string; secretId: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    // Check GitHub write permission
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
-    if (!role) {
-      throw new ForbiddenError('You do not have access to this vault');
-    }
-    const canWriteGitHub = ['write', 'maintain', 'admin'].includes(role);
-    if (!canWriteGitHub) {
-      throw new ForbiddenError('You need write access to this repository to restore secrets');
-    }
-
+    // Get user from database first (needed for permission resolution)
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
     if (!user) {
       throw new ForbiddenError('User not found in database');
+    }
+
+    // Check GitHub role
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
+    if (!role) {
+      throw new ForbiddenError('You do not have access to this vault');
+    }
+
+    // Get the trashed secret to check its environment for permission
+    const trashedSecret = await getTrashedSecretById(params.secretId, vault.id);
+    if (!trashedSecret) {
+      throw new NotFoundError('Secret not found in trash');
+    }
+
+    // Check environment-level write permission (uses override system)
+    const hasWritePermission = await resolveEffectivePermission(
+      vault.id,
+      trashedSecret.environment,
+      user.id,
+      role,
+      'write'
+    );
+    if (!hasWritePermission) {
+      throw new ForbiddenError(
+        `Your role (${role}) does not have permission to write to the "${trashedSecret.environment}" environment`
+      );
     }
 
     // Check plan limit for write access
@@ -891,7 +1039,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     try {
       const restoredSecret = await restoreSecret(params.secretId, vault.id);
       if (!restoredSecret) {
-        throw new NotFoundError('Secret not found in trash');
+        throw new NotFoundError('Failed to restore secret');
       }
 
       await touchVault(vault.id);
@@ -932,33 +1080,53 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string; secretId: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    // Check GitHub write permission
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
-    if (!role) {
-      throw new ForbiddenError('You do not have access to this vault');
-    }
-    const canWriteGitHub = ['write', 'maintain', 'admin'].includes(role);
-    if (!canWriteGitHub) {
-      throw new ForbiddenError('You need write access to this repository to permanently delete secrets');
-    }
-
+    // Get user from database first (needed for permission resolution)
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
     if (!user) {
       throw new ForbiddenError('User not found in database');
     }
 
+    // Check GitHub role
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
+    if (!role) {
+      throw new ForbiddenError('You do not have access to this vault');
+    }
+
+    // Get the trashed secret to check its environment for permission
+    const trashedSecret = await getTrashedSecretById(params.secretId, vault.id);
+    if (!trashedSecret) {
+      throw new NotFoundError('Secret not found in trash');
+    }
+
+    // Check environment-level write permission (uses override system)
+    const hasWritePermission = await resolveEffectivePermission(
+      vault.id,
+      trashedSecret.environment,
+      user.id,
+      role,
+      'write'
+    );
+    if (!hasWritePermission) {
+      throw new ForbiddenError(
+        `Your role (${role}) does not have permission to write to the "${trashedSecret.environment}" environment`
+      );
+    }
+
     const deletedSecret = await permanentlyDeleteSecret(params.secretId, vault.id);
     if (!deletedSecret) {
-      throw new NotFoundError('Secret not found in trash');
+      throw new NotFoundError('Failed to delete secret');
     }
 
     await touchVault(vault.id);
@@ -988,28 +1156,32 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    // Check GitHub write permission
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
-    if (!role) {
-      throw new ForbiddenError('You do not have access to this vault');
-    }
-    const canWriteGitHub = ['write', 'maintain', 'admin'].includes(role);
-    if (!canWriteGitHub) {
-      throw new ForbiddenError('You need write access to this repository to empty trash');
-    }
-
+    // Get user from database first
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
     if (!user) {
       throw new ForbiddenError('User not found in database');
+    }
+
+    // Check GitHub role - require admin for bulk trash operations
+    // This is because emptying trash affects multiple environments
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
+    if (!role) {
+      throw new ForbiddenError('You do not have access to this vault');
+    }
+    if (role !== 'admin') {
+      throw new ForbiddenError('Only repository admins can empty the entire trash. Use individual delete for specific secrets.');
     }
 
     const result = await emptyTrash(vault.id);
@@ -1051,14 +1223,14 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
     if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
@@ -1081,7 +1253,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const params = request.params as { owner: string; repo: string };
     const repoFullName = `${params.owner}/${params.repo}`;
     const body = CreateEnvironmentSchema.parse(request.body);
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
@@ -1090,7 +1262,10 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
 
     // Get user for plan check
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
     if (!user) {
       throw new ForbiddenError('User not found in database');
@@ -1148,7 +1323,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const repoFullName = `${params.owner}/${params.repo}`;
     const oldName = params.name;
     const body = RenameEnvironmentSchema.parse(request.body);
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
@@ -1202,7 +1377,10 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
 
     // Log activity
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
     if (user) {
       await logActivity({
@@ -1234,7 +1412,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const params = request.params as { owner: string; repo: string; name: string };
     const repoFullName = `${params.owner}/${params.repo}`;
     const envName = params.name;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
@@ -1286,7 +1464,10 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
 
     // Log activity
     const user = await db.query.users.findFirst({
-      where: eq(users.githubId, githubUser.githubId),
+      where: and(
+        eq(users.forgeType, vcsUser.forgeType),
+        eq(users.forgeUserId, vcsUser.forgeUserId)
+      ),
     });
     if (user) {
       await logActivity({
@@ -1320,14 +1501,14 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = request.params as { owner: string; repo: string };
     const repoFullName = `${params.owner}/${params.repo}`;
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
     if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }
@@ -1447,14 +1628,14 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     const query = request.query as { limit?: string; offset?: string };
     const limit = Math.min(parseInt(query.limit || '50', 10), 100);
     const offset = parseInt(query.offset || '0', 10);
-    const githubUser = request.githubUser!;
+    const vcsUser = request.vcsUser || request.githubUser!;
 
     const vault = await getVaultByRepoInternal(repoFullName);
     if (!vault) {
       throw new NotFoundError('Vault not found');
     }
 
-    const role = await getUserRoleWithApp(vault.repoFullName, githubUser.username);
+    const role = await getUserRoleWithApp(vault.repoFullName, vcsUser.username);
     if (!role) {
       throw new ForbiddenError('You do not have access to this vault');
     }

@@ -23,8 +23,13 @@ export interface VaultWithSecrets {
 }
 
 export interface VaultSyncInfo {
+  id: string;
   provider: string;
+  projectId: string;
   projectName: string | null;
+  connectionId: string;
+  keywayEnvironment: string;
+  providerEnvironment: string;
   lastSyncedAt: string | null;
 }
 
@@ -117,10 +122,15 @@ export async function getVaultsForUser(
       // Private vaults beyond plan limit are read-only
       const isReadOnly = vault.isPrivate && excessVaultIds.has(vault.id);
 
-      // Get unique providers from syncs
+      // Get syncs with full details for sync button
       const syncs = vault.vaultSyncs.map(sync => ({
+        id: sync.id,
         provider: sync.provider,
+        projectId: sync.providerProjectId,
         projectName: sync.providerProjectName,
+        connectionId: sync.connectionId,
+        keywayEnvironment: sync.keywayEnvironment,
+        providerEnvironment: sync.providerEnvironment,
         lastSyncedAt: sync.lastSyncedAt?.toISOString() || null,
       }));
 
@@ -184,10 +194,15 @@ export async function getVaultByRepo(
   const excessVaultIds = await getExcessPrivateVaultIds(vault.ownerId, plan);
   const isReadOnly = vault.isPrivate && excessVaultIds.has(vault.id);
 
-  // Get syncs info
+  // Get syncs with full details for sync button
   const syncs = vault.vaultSyncs.map(sync => ({
+    id: sync.id,
     provider: sync.provider,
+    projectId: sync.providerProjectId,
     projectName: sync.providerProjectName,
+    connectionId: sync.connectionId,
+    keywayEnvironment: sync.keywayEnvironment,
+    providerEnvironment: sync.providerEnvironment,
     lastSyncedAt: sync.lastSyncedAt?.toISOString() || null,
   }));
 

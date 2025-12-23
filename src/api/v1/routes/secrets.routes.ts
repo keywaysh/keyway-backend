@@ -6,10 +6,11 @@ import { eq, and, inArray, isNull } from 'drizzle-orm';
 import { getEncryptionService, sanitizeForLogging } from '../../../utils/encryption';
 import { sendData, NotFoundError, BadRequestError, PlanLimitError } from '../../../lib';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
-import { logActivity, extractRequestInfo, detectPlatform, trashSecretsByIds } from '../../../services';
+import { logActivity, extractRequestInfo, detectPlatform, trashSecretsByIds, recordSecretAccesses, recordSecretAccess } from '../../../services';
 import { processPullEvent, generateDeviceId } from '../../../services/security.service';
 import { canWriteToVault } from '../../../services/usage.service';
 import { repoFullNameSchema, DEFAULT_ENVIRONMENTS } from '../../../types';
+import type { RecordAccessContext, SecretAccessRecord } from '../../../services';
 
 // Security limits for secrets
 const MAX_SECRET_KEY_LENGTH = 256;
@@ -334,6 +335,8 @@ export async function secretsRoutes(fastify: FastifyInstance) {
           repoFullName,
           environment,
           secretCount: envSecrets.length,
+          // Include secret keys in metadata for enriched audit trail
+          secretKeys: envSecrets.map(s => s.key),
         },
         ...extractRequestInfo(request),
       });
@@ -350,6 +353,27 @@ export async function secretsRoutes(fastify: FastifyInstance) {
         ip: request.ip || 'unknown',
         userAgent: request.headers['user-agent'] || null,
       }).catch(err => fastify.log.error(err, 'Security detection failed'));
+
+      // Fire-and-forget exposure tracking - record which secrets this user accessed
+      const accessCtx: RecordAccessContext = {
+        userId: user.id,
+        username: vcsUser.username,
+        userAvatarUrl: vcsUser.avatarUrl,
+        vaultId: vault.id,
+        repoFullName,
+        environment,
+        githubRole: request.repoRole || 'read',
+        platform: detectPlatform(request),
+        ipAddress: request.ip,
+        deviceId,
+      };
+      const secretRecords: SecretAccessRecord[] = envSecrets.map(s => ({
+        secretId: s.id,
+        secretKey: s.key,
+      }));
+      recordSecretAccesses(accessCtx, secretRecords).catch(err =>
+        fastify.log.error(err, 'Exposure tracking failed')
+      );
     }
 
     return sendData(reply, { content }, { requestId: request.id });
@@ -428,6 +452,30 @@ export async function secretsRoutes(fastify: FastifyInstance) {
         },
         ...extractRequestInfo(request),
       });
+
+      // Fire-and-forget exposure tracking - record this secret access
+      const deviceId = generateDeviceId(
+        request.headers['user-agent'] || null,
+        request.ip || 'unknown'
+      );
+      const accessCtx: RecordAccessContext = {
+        userId: user.id,
+        username: vcsUser.username,
+        userAvatarUrl: vcsUser.avatarUrl,
+        vaultId: vault.id,
+        repoFullName,
+        environment,
+        githubRole: request.repoRole || 'read',
+        platform: detectPlatform(request),
+        ipAddress: request.ip,
+        deviceId,
+      };
+      recordSecretAccess(accessCtx, {
+        secretId: secret.id,
+        secretKey: secret.key,
+      }).catch(err =>
+        fastify.log.error(err, 'Exposure tracking failed')
+      );
     }
 
     return sendData(reply, { key, value, environment }, { requestId: request.id });

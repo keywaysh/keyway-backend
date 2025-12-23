@@ -11,6 +11,7 @@ import { githubRoutes } from './routes/github.routes';
 import { apiKeysRoutes } from './routes/api-keys.routes';
 import { organizationsRoutes } from './routes/organizations.routes';
 import { permissionOverridesRoutes } from './routes/permission-overrides.routes';
+import { exposureRoutes } from './routes/exposure.routes';
 
 /**
  * API v1 Router
@@ -31,6 +32,8 @@ export async function apiV1Routes(fastify: FastifyInstance) {
   fastify.register(organizationsRoutes, { prefix: '/orgs' });
   // Permission overrides are nested under vaults but in separate file for clarity
   fastify.register(permissionOverridesRoutes, { prefix: '/vaults' });
+  // Exposure routes are at root level since they span orgs and vaults
+  fastify.register(exposureRoutes);
 
   // Health check for v1
   fastify.get('/health', async () => ({

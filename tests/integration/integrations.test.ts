@@ -429,11 +429,6 @@ describe('Integration Routes', () => {
     });
   });
 
-  // Note: Sync routes (/vaults/:owner/:repo/sync/*) require complex mocking of
-  // verifyVaultAccess which involves GitHub API calls and DB lookups.
-  // These are better tested with e2e tests or with a complete mock setup.
-  // The core sync functionality is tested via the integration.service unit tests.
-
   describe('Sync routes validation', () => {
     it('should validate required query params for sync/status', async () => {
       const response = await app.inject({
@@ -443,6 +438,17 @@ describe('Integration Routes', () => {
       });
 
       // Should fail validation (400) or auth (depends on order)
+      expect([400, 500]).toContain(response.statusCode);
+    });
+
+    it('should validate required query params for sync/preview', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/integrations/vaults/testuser/test-repo/sync/preview',
+        // Missing required query params
+      });
+
+      // Should fail validation
       expect([400, 500]).toContain(response.statusCode);
     });
 
@@ -456,6 +462,56 @@ describe('Integration Routes', () => {
       });
 
       // Should fail validation
+      expect([400, 500]).toContain(response.statusCode);
+    });
+
+    it('should validate connectionId is UUID for sync/preview', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/integrations/vaults/testuser/test-repo/sync/preview',
+        query: {
+          connectionId: 'not-a-uuid',
+          projectId: 'prj_123',
+          keywayEnvironment: 'production',
+          providerEnvironment: 'production',
+        },
+      });
+
+      // Should fail UUID validation
+      expect([400, 500]).toContain(response.statusCode);
+    });
+
+    it('should validate connectionId is UUID for sync POST', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/integrations/vaults/testuser/test-repo/sync',
+        payload: {
+          connectionId: 'not-a-uuid',
+          projectId: 'prj_123',
+          keywayEnvironment: 'production',
+          providerEnvironment: 'production',
+          direction: 'push',
+        },
+      });
+
+      // Should fail UUID validation
+      expect([400, 500]).toContain(response.statusCode);
+    });
+
+    it('should validate direction enum for sync POST', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/integrations/vaults/testuser/test-repo/sync',
+        payload: {
+          connectionId: '00000000-0000-0000-0000-000000000000',
+          projectId: 'prj_123',
+          keywayEnvironment: 'production',
+          providerEnvironment: 'production',
+          direction: 'invalid-direction', // Should be 'push' or 'pull'
+        },
+      });
+
+      // Should fail enum validation
       expect([400, 500]).toContain(response.statusCode);
     });
   });

@@ -525,6 +525,34 @@ export const permissionOverrides = pgTable('permission_overrides', {
   ),
 ]);
 
+// Secret accesses for Exposure feature (tracking who accessed which secrets)
+// Enables offboarding: "Dev leaves? You know exactly what to rotate."
+export const secretAccesses = pgTable('secret_accesses', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // User (snapshot fields for survival after user deletion)
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  username: text('username').notNull(),
+  userAvatarUrl: text('user_avatar_url'),
+  // Secret (snapshot fields for survival after secret deletion)
+  secretId: uuid('secret_id').references(() => secrets.id, { onDelete: 'set null' }),
+  secretKey: text('secret_key').notNull(),
+  // Vault (snapshot fields for survival after vault deletion)
+  vaultId: uuid('vault_id').references(() => vaults.id, { onDelete: 'set null' }),
+  repoFullName: text('repo_full_name').notNull(),
+  environment: text('environment').notNull(),
+  // Context at time of access
+  githubRole: collaboratorRoleEnum('github_role').notNull(),
+  platform: activityPlatformEnum('platform').notNull(),
+  ipAddress: text('ip_address'),
+  deviceId: text('device_id'),
+  // Timestamps
+  firstAccessedAt: timestamp('first_accessed_at').notNull().defaultNow(),
+  lastAccessedAt: timestamp('last_accessed_at').notNull().defaultNow(),
+  accessCount: integer('access_count').notNull().default(1),
+  // Link to pull event for forensics
+  pullEventId: uuid('pull_event_id').references(() => pullEvents.id, { onDelete: 'set null' }),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many, one }) => ({
   vaults: many(vaults),
@@ -539,6 +567,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   vcsAppInstallations: many(vcsAppInstallations),
   apiKeys: many(apiKeys),
   organizationMemberships: many(organizationMembers),
+  secretAccesses: many(secretAccesses),
 }));
 
 export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
@@ -576,6 +605,7 @@ export const vaultsRelations = relations(vaults, ({ one, many }) => ({
   securityAlerts: many(securityAlerts),
   vaultSyncs: many(vaultSyncs),
   syncLogs: many(syncLogs),
+  secretAccesses: many(secretAccesses),
 }));
 
 export const secretsRelations = relations(secrets, ({ one, many }) => ({
@@ -588,6 +618,7 @@ export const secretsRelations = relations(secrets, ({ one, many }) => ({
     references: [users.id],
   }),
   versions: many(secretVersions),
+  accesses: many(secretAccesses),
 }));
 
 export const secretVersionsRelations = relations(secretVersions, ({ one }) => ({
@@ -647,6 +678,26 @@ export const pullEventsRelations = relations(pullEvents, ({ one, many }) => ({
     references: [vaults.id],
   }),
   securityAlerts: many(securityAlerts),
+  secretAccesses: many(secretAccesses),
+}));
+
+export const secretAccessesRelations = relations(secretAccesses, ({ one }) => ({
+  user: one(users, {
+    fields: [secretAccesses.userId],
+    references: [users.id],
+  }),
+  secret: one(secrets, {
+    fields: [secretAccesses.secretId],
+    references: [secrets.id],
+  }),
+  vault: one(vaults, {
+    fields: [secretAccesses.vaultId],
+    references: [vaults.id],
+  }),
+  pullEvent: one(pullEvents, {
+    fields: [secretAccesses.pullEventId],
+    references: [pullEvents.id],
+  }),
 }));
 
 export const securityAlertsRelations = relations(securityAlerts, ({ one }) => ({
@@ -824,3 +875,5 @@ export type PermissionOverride = typeof permissionOverrides.$inferSelect;
 export type NewPermissionOverride = typeof permissionOverrides.$inferInsert;
 export type OrgRole = typeof orgRoleEnum.enumValues[number];
 export type OverrideTargetType = typeof overrideTargetTypeEnum.enumValues[number];
+export type SecretAccess = typeof secretAccesses.$inferSelect;
+export type NewSecretAccess = typeof secretAccesses.$inferInsert;

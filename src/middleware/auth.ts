@@ -78,6 +78,8 @@ declare module 'fastify' {
       scopes: string[];
       userId: string;
     };
+    /** User's role for the current repository (set by requireEnvironmentAccess) */
+    repoRole?: 'read' | 'triage' | 'write' | 'maintain' | 'admin';
   }
 }
 
@@ -382,6 +384,9 @@ export function requireEnvironmentAccess(permissionType: PermissionType) {
     if (!userRole) {
       throw new ForbiddenError('You do not have access to this repository');
     }
+
+    // Attach role to request for use in route handlers (e.g., exposure tracking)
+    request.repoRole = userRole;
 
     // Get vault for this repository
     const vault = await db.query.vaults.findFirst({

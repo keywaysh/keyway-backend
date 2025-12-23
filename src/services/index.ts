@@ -103,3 +103,19 @@ export {
   type ConvertTrialInput,
   type ExpireTrialInput,
 } from './trial.service';
+
+// Exposure service (secret access tracking for offboarding)
+export {
+  recordSecretAccesses,
+  recordSecretAccess,
+  getExposureForUser,
+  getExposureForOrg,
+  getSecretAccessHistory,
+  type RecordAccessContext,
+  type SecretAccessRecord,
+  type ExposureUserSummary,
+  type ExposureSecretDetail,
+  type ExposureVaultGroup,
+  type ExposureUserReport,
+  type ExposureOrgSummary,
+} from './exposure.service';

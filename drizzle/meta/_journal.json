@@ -253,6 +253,13 @@
       "when": 1766800000000,
       "tag": "0035_rename_github_app_actions_to_vcs",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "5",
+      "when": 1766900000000,
+      "tag": "0036_add_secret_accesses",
+      "breakpoints": true
     }
   ]
 }

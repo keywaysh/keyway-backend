@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authenticateGitHub, requireAdminAccess, requireApiKeyScope } from '../../../middleware/auth';
 import { db, users, vaults, secrets, environmentPermissions, organizations } from '../../../db';
-import { ensureOrganizationExists, getTrialEligibility } from '../../../services/organization.service';
+import { ensureOrganizationExists, getTrialEligibility, getOrganizationById } from '../../../services/organization.service';
 import { getEffectivePlanWithTrial } from '../../../services/trial.service';
 import { getTokenForRepo } from '../../../utils/github';
 import { eq, and } from 'drizzle-orm';
@@ -37,12 +37,15 @@ import {
   restoreSecret,
   permanentlyDeleteSecret,
   emptyTrash,
+  recordSecretAccess,
+  type RecordAccessContext,
 } from '../../../services';
 import {
   getSecretVersions,
   getSecretVersionValue,
   restoreSecretVersion,
 } from '../../../services/secretVersion.service';
+import { generateDeviceId } from '../../../services/security.service';
 import { getRepoInfoWithApp, getRepoCollaboratorsWithApp, getUserRoleWithApp } from '../../../utils/github';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
 import { repoFullNameSchema, DEFAULT_ENVIRONMENTS } from '../../../types';
@@ -295,7 +298,17 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
     // Default to 'free' plan if user not found (shouldn't happen but safe fallback)
     const userPlan = user?.plan ?? 'free';
 
-    const { vault, hasAccess } = await getVaultByRepo(repoFullName, vcsUser.username, userPlan);
+    // Check if vault belongs to an organization - if so, use org's effective plan
+    const vaultInfo = await getVaultByRepoInternal(repoFullName);
+    let effectivePlan = userPlan;
+    if (vaultInfo?.orgId) {
+      const org = await getOrganizationById(vaultInfo.orgId);
+      if (org) {
+        effectivePlan = getEffectivePlanWithTrial(org);
+      }
+    }
+
+    const { vault, hasAccess } = await getVaultByRepo(repoFullName, vcsUser.username, effectivePlan);
 
     if (!vault || !hasAccess) {
       throw new NotFoundError(`Vault '${repoFullName}' not found or you don't have access`);
@@ -755,6 +768,33 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
           repoFullName: vault.repoFullName,
         },
         ...extractRequestInfo(request),
+      });
+
+      // Fire-and-forget exposure tracking - record this secret access
+      const deviceId = generateDeviceId(
+        request.headers['user-agent'] || null,
+        request.ip || 'unknown'
+      );
+      const accessCtx: RecordAccessContext = {
+        userId: user.id,
+        username: vcsUser.username,
+        userAvatarUrl: vcsUser.avatarUrl,
+        vaultId: vault.id,
+        repoFullName: vault.repoFullName,
+        environment: secretData.environment,
+        githubRole: role,
+        platform: detectPlatform(request),
+        ipAddress: request.ip,
+        deviceId,
+      };
+      fastify.log.info({ userId: user.id, secretId: params.secretId }, 'Recording secret access for exposure');
+      recordSecretAccess(accessCtx, {
+        secretId: params.secretId,
+        secretKey: secretData.key,
+      }).then(() => {
+        fastify.log.info({ secretId: params.secretId }, 'Exposure tracking succeeded');
+      }).catch(err => {
+        fastify.log.error({ err, secretId: params.secretId }, 'Exposure tracking failed');
       });
     }
 

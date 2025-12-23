@@ -470,12 +470,15 @@ export async function secretsRoutes(fastify: FastifyInstance) {
         ipAddress: request.ip,
         deviceId,
       };
+      fastify.log.info({ userId: user.id, secretId: secret.id, secretKey: secret.key }, 'Recording secret access for exposure');
       recordSecretAccess(accessCtx, {
         secretId: secret.id,
         secretKey: secret.key,
-      }).catch(err =>
-        fastify.log.error(err, 'Exposure tracking failed')
-      );
+      }).then(() => {
+        fastify.log.info({ secretId: secret.id }, 'Exposure tracking succeeded');
+      }).catch(err => {
+        fastify.log.error({ err, secretId: secret.id }, 'Exposure tracking failed');
+      });
     }
 
     return sendData(reply, { key, value, environment }, { requestId: request.id });

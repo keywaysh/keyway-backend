@@ -10,6 +10,8 @@ import {
   getSecretAccessHistory,
 } from '../../../services/exposure.service';
 import { getOrganizationByLogin, getOrganizationMembership, isOrganizationOwner } from '../../../services/organization.service';
+import { getEffectivePlanWithTrial } from '../../../services/trial.service';
+import { PlanLimitError } from '../../../lib';
 
 /**
  * Exposure routes - Track which secrets users have accessed
@@ -64,11 +66,11 @@ export async function exposureRoutes(fastify: FastifyInstance) {
       throw new ForbiddenError('Only organization owners can view exposure reports');
     }
 
-    // TODO: Check if org has Team plan (exposure is Team-only feature)
-    // For now, allow access to implement and test
-    // if (org.plan !== 'team') {
-    //   throw new ForbiddenError('Exposure reports require a Team plan');
-    // }
+    // Exposure reports require Team plan
+    const effectivePlan = getEffectivePlanWithTrial(org);
+    if (effectivePlan !== 'team') {
+      throw new PlanLimitError('Exposure reports require a Team plan. Upgrade to track which secrets your team members have accessed.');
+    }
 
     // Build org repo prefix for filtering (e.g., "myorg/")
     const orgRepoPrefix = `${orgLogin}/`;
@@ -118,6 +120,12 @@ export async function exposureRoutes(fastify: FastifyInstance) {
     const isOwner = await isOrganizationOwner(org.id, user.id);
     if (!isOwner) {
       throw new ForbiddenError('Only organization owners can view exposure reports');
+    }
+
+    // Exposure reports require Team plan
+    const effectivePlan = getEffectivePlanWithTrial(org);
+    if (effectivePlan !== 'team') {
+      throw new PlanLimitError('Exposure reports require a Team plan. Upgrade to track which secrets your team members have accessed.');
     }
 
     // Build org repo prefix for filtering

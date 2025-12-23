@@ -198,6 +198,13 @@ vi.mock('../../src/config/plans', () => ({
 // Mock security service
 vi.mock('../../src/services/security.service', () => ({
   getSecurityAlerts: vi.fn().mockResolvedValue([]),
+  generateDeviceId: vi.fn().mockReturnValue('device-123'),
+}));
+
+// Mock exposure service
+vi.mock('../../src/services/exposure.service', () => ({
+  recordSecretAccesses: vi.fn().mockResolvedValue(undefined),
+  recordSecretAccess: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock secret service
@@ -237,6 +244,8 @@ vi.mock('../../src/services', () => ({
   checkVaultCreationAllowed: vi.fn().mockResolvedValue({ allowed: true }),
   computeUserUsage: vi.fn().mockResolvedValue({ public: 0, private: 0 }),
   getPrivateVaultAccess: vi.fn().mockResolvedValue({ allowedVaultIds: new Set(), excessVaultIds: new Set() }),
+  recordSecretAccesses: vi.fn().mockResolvedValue(undefined),
+  recordSecretAccess: vi.fn().mockResolvedValue(undefined),
 }));
 
 describe('Vaults Routes', () => {

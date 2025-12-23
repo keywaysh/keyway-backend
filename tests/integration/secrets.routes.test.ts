@@ -152,12 +152,20 @@ vi.mock('../../src/services', () => ({
   extractRequestInfo: vi.fn().mockReturnValue({ ip: '127.0.0.1', userAgent: 'test' }),
   detectPlatform: vi.fn().mockReturnValue('cli'),
   trashSecretsByIds: mockTrashSecretsByIds,
+  recordSecretAccesses: vi.fn().mockResolvedValue(undefined),
+  recordSecretAccess: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock security service
 vi.mock('../../src/services/security.service', () => ({
   processPullEvent: vi.fn().mockResolvedValue(undefined),
   generateDeviceId: vi.fn().mockReturnValue('device-123'),
+}));
+
+// Mock exposure service
+vi.mock('../../src/services/exposure.service', () => ({
+  recordSecretAccesses: vi.fn().mockResolvedValue(undefined),
+  recordSecretAccess: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock usage service

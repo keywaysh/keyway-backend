@@ -75,7 +75,7 @@ describe('Environment Routes', () => {
       const { getVaultByRepoInternal } = await import('../../src/services');
       (getVaultByRepoInternal as any).mockResolvedValue({
         ...mockVault,
-        environments: ['local', 'development', 'staging', 'production'],
+        environments: ['development', 'staging', 'production'],
       });
 
       const response = await app.inject({
@@ -85,7 +85,7 @@ describe('Environment Routes', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.data.environments).toEqual(['local', 'development', 'staging', 'production']);
+      expect(body.data.environments).toEqual(['development', 'staging', 'production']);
     });
 
     it('should return default environments for vault without environments field', async () => {
@@ -102,7 +102,7 @@ describe('Environment Routes', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.data.environments).toEqual(['local', 'development', 'staging', 'production']);
+      expect(body.data.environments).toEqual(['development', 'staging', 'production']);
     });
 
     it('should return 404 for non-existent vault', async () => {

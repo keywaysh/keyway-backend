@@ -81,6 +81,7 @@ vi.mock('../../src/utils/analytics', () => ({
 // Mock email
 vi.mock('../../src/utils/email', () => ({
   sendWelcomeEmail: vi.fn(),
+  sendTrialStartedEmail: vi.fn(),
 }));
 
 // Mock token encryption

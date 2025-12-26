@@ -271,3 +271,140 @@ Keyway - GitHub-native secrets management
 https://keyway.sh | https://docs.keyway.sh
 `;
 }
+
+// ============================================
+// Trial Emails
+// ============================================
+
+interface TrialStartedEmailParams {
+  to: string;
+  username: string;
+  orgName: string;
+  trialDays: number;
+  trialEndsAt: Date;
+}
+
+export async function sendTrialStartedEmail(params: TrialStartedEmailParams): Promise<void> {
+  if (!resend) {
+    logger.debug({ to: params.to, org: params.orgName }, 'Skipping trial started email (Resend not configured)');
+    return;
+  }
+
+  const subject = `Your Team trial has started for ${params.orgName}`;
+
+  try {
+    await resend.emails.send({
+      from: config.email.fromAddress,
+      replyTo: config.email.replyToAddress,
+      to: params.to,
+      subject,
+      html: getTrialStartedEmailHtml(params),
+      text: getTrialStartedEmailText(params),
+    });
+    logger.info({ to: params.to, org: params.orgName }, 'Trial started email sent');
+  } catch (error) {
+    logger.error({
+      to: params.to,
+      org: params.orgName,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    }, 'Failed to send trial started email');
+  }
+}
+
+function getTrialStartedEmailHtml(params: TrialStartedEmailParams): string {
+  const formattedDate = params.trialEndsAt.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #1a202c; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+  <div style="text-align: center; margin-bottom: 32px;">
+    <img src="https://keyway.sh/logo.svg" alt="Keyway" width="48" height="48" style="margin-bottom: 16px;">
+    <h1 style="font-size: 24px; font-weight: 600; margin: 0;">Your Team trial has started!</h1>
+  </div>
+
+  <p>Hey ${params.username},</p>
+
+  <p>You've started a <strong>${params.trialDays}-day Team trial</strong> for <strong>${params.orgName}</strong>!</p>
+
+  <div style="background: #f7fafc; border-radius: 8px; padding: 20px; margin: 24px 0;">
+    <p style="margin: 0 0 12px 0; font-weight: 600;">Your trial includes:</p>
+    <ul style="margin: 0; padding-left: 20px; color: #4a5568;">
+      <li>Unlimited private repositories</li>
+      <li>Unlimited environments per vault</li>
+      <li>Unlimited secrets</li>
+      <li>Unlimited provider integrations (Vercel, Netlify, etc.)</li>
+      <li>Organization-wide permissions</li>
+      <li>Activity audit logs</li>
+    </ul>
+  </div>
+
+  <p>Your trial ends on <strong>${formattedDate}</strong>. You can upgrade anytime from your billing page.</p>
+
+  <p style="margin-top: 24px;">
+    <a href="https://keyway.sh/dashboard/orgs/${params.orgName}/billing" style="display: inline-block; background: #667eea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500;">Open Dashboard</a>
+  </p>
+
+  <p style="margin-top: 32px;">Questions? Just reply to this email — I'm happy to help.</p>
+
+  <p style="margin-top: 24px;">
+    Cheers,<br>
+    Nicolas
+  </p>
+
+  <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 32px 0;">
+
+  <p style="color: #a0aec0; font-size: 12px; text-align: center;">
+    Keyway - GitHub-native secrets management<br>
+    <a href="https://keyway.sh" style="color: #a0aec0;">keyway.sh</a> · <a href="https://docs.keyway.sh" style="color: #a0aec0;">docs.keyway.sh</a>
+  </p>
+</body>
+</html>
+`;
+}
+
+function getTrialStartedEmailText(params: TrialStartedEmailParams): string {
+  const formattedDate = params.trialEndsAt.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+
+  return `
+Your Team trial has started!
+
+Hey ${params.username},
+
+You've started a ${params.trialDays}-day Team trial for ${params.orgName}!
+
+Your trial includes:
+- Unlimited private repositories
+- Unlimited environments per vault
+- Unlimited secrets
+- Unlimited provider integrations (Vercel, Netlify, etc.)
+- Organization-wide permissions
+- Activity audit logs
+
+Your trial ends on ${formattedDate}. You can upgrade anytime from your billing page.
+
+Open your dashboard:
+https://keyway.sh/dashboard/orgs/${params.orgName}/billing
+
+Questions? Just reply to this email — I'm happy to help.
+
+Cheers,
+Nicolas
+
+---
+Keyway - GitHub-native secrets management
+https://keyway.sh | https://docs.keyway.sh
+`;
+}

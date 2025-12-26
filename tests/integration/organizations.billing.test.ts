@@ -56,6 +56,12 @@ vi.mock('../../src/services/activity.service', () => ({
   detectPlatform: vi.fn().mockReturnValue('web'),
 }));
 
+// Mock email
+vi.mock('../../src/utils/email', () => ({
+  sendWelcomeEmail: vi.fn(),
+  sendTrialStartedEmail: vi.fn(),
+}));
+
 // Mock github utils
 vi.mock('../../src/utils/github', () => ({
   listOrgMembers: vi.fn(),

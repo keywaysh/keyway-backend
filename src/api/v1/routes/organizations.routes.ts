@@ -21,6 +21,7 @@ import {
   TRIAL_DURATION_DAYS,
 } from '../../../services/trial.service';
 import { detectPlatform } from '../../../services/activity.service';
+import { sendTrialStartedEmail } from '../../../utils/email';
 import { listOrgMembers, getOrgMembership, listUserOrganizations } from '../../../utils/github';
 import { getInstallationToken, findOrgInstallationViaGitHubAPI, syncInstallationFromAPI } from '../../../services/github-app.service';
 import { eq, and } from 'drizzle-orm';
@@ -705,6 +706,17 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
 
     const updatedOrg = result.organization!;
     const trialInfo = getTrialInfo(updatedOrg);
+
+    // Send trial started email (fire and forget)
+    if (user.email) {
+      sendTrialStartedEmail({
+        to: user.email,
+        username: user.username,
+        orgName: org.login,
+        trialDays: TRIAL_DURATION_DAYS,
+        trialEndsAt: updatedOrg.trialEndsAt!,
+      });
+    }
 
     return sendData(reply, {
       message: `Trial started! You have ${TRIAL_DURATION_DAYS} days to try the Team plan.`,

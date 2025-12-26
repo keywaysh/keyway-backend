@@ -31,6 +31,12 @@ vi.mock('../../src/utils/analytics', () => ({
   },
 }));
 
+// Mock email - track calls to verify emails are sent
+vi.mock('../../src/utils/email', () => ({
+  sendWelcomeEmail: vi.fn(),
+  sendTrialStartedEmail: vi.fn(),
+}));
+
 describe('Auth Routes', () => {
   let app: FastifyInstance;
 

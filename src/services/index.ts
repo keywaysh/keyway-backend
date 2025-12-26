@@ -119,3 +119,11 @@ export {
   type ExposureUserReport,
   type ExposureOrgSummary,
 } from './exposure.service';
+
+// Signup service (new user onboarding)
+export {
+  handleNewUserSignup,
+  type SignupSource,
+  type SignupMethod,
+  type NewUserSignupParams,
+} from './signup.service';

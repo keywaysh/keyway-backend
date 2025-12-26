@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { db, users, deviceCodes } from '../../../db';
 import { eq, and } from 'drizzle-orm';
 import { exchangeCodeForToken, getUserFromToken } from '../../../utils/github';
-import { trackEvent, identifyUser, AnalyticsEvents, getSignupSource } from '../../../utils/analytics';
+import { trackEvent, AnalyticsEvents, getSignupSource } from '../../../utils/analytics';
 import { generateDeviceCode, generateUserCode, DEVICE_FLOW_CONFIG } from '../../../utils/deviceCodes';
 import { generateKeywayToken, getTokenExpiresAt } from '../../../utils/jwt';
 import { config } from '../../../config';
@@ -11,7 +11,7 @@ import { NotFoundError, BadRequestError, ForbiddenError } from '../../../lib';
 import { authenticateGitHub } from '../../../middleware/auth';
 import { encryptAccessToken } from '../../../utils/tokenEncryption';
 import { signState, verifyState } from '../../../utils/state';
-import { sendWelcomeEmail } from '../../../utils/email';
+import { handleNewUserSignup } from '../../../services/signup.service';
 import { sendData, sendNoContent } from '../../../lib/response';
 import { handleInstallationCreated, checkInstallationStatus } from '../../../services/github-app.service';
 import { logActivity, extractRequestInfo, detectPlatform } from '../../../services';
@@ -228,22 +228,11 @@ export async function authRoutes(fastify: FastifyInstance) {
           });
 
           if (isNewUser) {
-            trackEvent(user.id, AnalyticsEvents.USER_CREATED, {
-              username: githubUser.username,
+            await handleNewUserSignup({
+              user,
               signupSource: 'github_app_install',
               method: 'github_app_install',
             });
-
-            identifyUser(user.id, {
-              username: user.username,
-              plan: user.plan,
-              signupSource: 'github_app_install',
-              signupTimestamp: user.createdAt.toISOString(),
-            });
-
-            if (user.email) {
-              sendWelcomeEmail({ to: user.email, username: user.username });
-            }
           }
 
           // CLI flow: show "return to terminal" page
@@ -316,23 +305,11 @@ export async function authRoutes(fastify: FastifyInstance) {
         });
 
         if (isNewUser) {
-          trackEvent(user.id, AnalyticsEvents.USER_CREATED, {
-            username: githubUser.username,
-            signupSource,
+          await handleNewUserSignup({
+            user,
+            signupSource: signupSource || 'web',
             method: 'web_oauth',
           });
-
-          identifyUser(user.id, {
-            username: user.username,
-            plan: user.plan,
-            signupSource,
-            signupTimestamp: user.createdAt.toISOString(),
-          });
-
-          // Send welcome email (fire and forget)
-          if (user.email) {
-            sendWelcomeEmail({ to: user.email, username: user.username });
-          }
         }
 
         setSessionCookies(reply, request, keywayToken);
@@ -383,6 +360,15 @@ export async function authRoutes(fastify: FastifyInstance) {
                   suggestedRepository: deviceCodeRecord.suggestedRepository,
                 }, 'OAuth complete, chaining to GitHub App installation');
 
+                // Handle new user signup before redirect (chained flow)
+                if (isNewUser) {
+                  await handleNewUserSignup({
+                    user,
+                    signupSource: 'cli',
+                    method: 'device_flow_chained',
+                  });
+                }
+
                 return reply.redirect(appInstallUrl);
               }
             } catch (err) {
@@ -422,23 +408,11 @@ export async function authRoutes(fastify: FastifyInstance) {
         });
 
         if (isNewUser) {
-          trackEvent(user.id, AnalyticsEvents.USER_CREATED, {
-            username: githubUser.username,
+          await handleNewUserSignup({
+            user,
             signupSource: 'cli',
             method: 'device_flow',
           });
-
-          identifyUser(user.id, {
-            username: user.username,
-            plan: user.plan,
-            signupSource: 'cli',
-            signupTimestamp: user.createdAt.toISOString(),
-          });
-
-          // Send welcome email (fire and forget)
-          if (user.email) {
-            sendWelcomeEmail({ to: user.email, username: user.username });
-          }
         }
 
         return reply.type('text/html').send(renderSuccessPage(user.username));

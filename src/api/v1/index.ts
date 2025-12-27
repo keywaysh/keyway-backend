@@ -6,7 +6,6 @@ import { secretsRoutes } from './routes/secrets.routes';
 import { activityRoutes } from './routes/activity.routes';
 import { billingRoutes } from './routes/billing.routes';
 import { integrationsRoutes } from './routes/integrations.routes';
-import { adminRoutes } from './routes/admin.routes';
 import { githubRoutes } from './routes/github.routes';
 import { apiKeysRoutes } from './routes/api-keys.routes';
 import { organizationsRoutes } from './routes/organizations.routes';
@@ -26,7 +25,6 @@ export async function apiV1Routes(fastify: FastifyInstance) {
   fastify.register(activityRoutes, { prefix: '/activity' });
   fastify.register(billingRoutes, { prefix: '/billing' });
   fastify.register(integrationsRoutes, { prefix: '/integrations' });
-  fastify.register(adminRoutes, { prefix: '/admin' });
   fastify.register(githubRoutes, { prefix: '/github' });
   fastify.register(apiKeysRoutes, { prefix: '/api-keys' });
   fastify.register(organizationsRoutes, { prefix: '/orgs' });

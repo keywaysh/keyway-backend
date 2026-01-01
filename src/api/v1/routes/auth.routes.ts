@@ -755,10 +755,25 @@ export async function authRoutes(fastify: FastifyInstance) {
     preHandler: [authenticateGitHub],
   }, async (request, reply) => {
     const vcsUser = request.vcsUser || request.githubUser;
+
+    // Fetch user from DB to get plan
+    const user = await db.query.users.findFirst({
+      where: and(
+        eq(users.forgeType, vcsUser!.forgeType),
+        eq(users.forgeUserId, vcsUser!.forgeUserId)
+      ),
+      columns: {
+        plan: true,
+        createdAt: true,
+      },
+    });
+
     return sendData(reply, {
       username: vcsUser!.username,
       forgeType: vcsUser!.forgeType,
       forgeUserId: vcsUser!.forgeUserId,
+      plan: user?.plan || 'free',
+      createdAt: user?.createdAt?.toISOString() || null,
     }, { requestId: request.id });
   });
 

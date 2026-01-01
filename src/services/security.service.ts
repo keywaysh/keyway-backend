@@ -7,12 +7,15 @@ import { sendSecurityAlertEmail } from '../utils/email';
 import { logger } from '../utils/sharedLogger';
 
 // Types
+export type PullSource = 'cli' | 'api_key' | 'mcp';
+
 export interface PullContext {
   userId: string;
   vaultId: string;
   deviceId: string;
   ip: string;
   userAgent: string | null;
+  source?: PullSource;
 }
 
 interface GeoLocation {
@@ -168,6 +171,7 @@ export async function processPullEvent(ctx: PullContext): Promise<void> {
   const location = await getLocation(ctx.ip);
 
   // 2. Log pull event
+  const source = ctx.source || 'cli';
   const [pullEvent] = await db.insert(pullEvents).values({
     userId: ctx.userId,
     vaultId: ctx.vaultId,
@@ -178,9 +182,15 @@ export async function processPullEvent(ctx: PullContext): Promise<void> {
     city: location.city,
     latitude: location.latitude?.toString(),
     longitude: location.longitude?.toString(),
+    source,
   }).returning();
 
-  // 3. Run detection checks
+  // 3. Skip security checks for non-CLI sources (API keys, MCP)
+  if (source !== 'cli') {
+    return;
+  }
+
+  // 4. Run detection checks
   const checks: Array<{ type: SecurityAlertType; check: () => Promise<string | null> | string | null }> = [
     { type: 'new_device', check: () => checkNewDevice(ctx) },
     { type: 'new_location', check: () => checkNewLocation(ctx, location) },
@@ -189,7 +199,7 @@ export async function processPullEvent(ctx: PullContext): Promise<void> {
     { type: 'rate_anomaly', check: () => checkRateAnomaly(ctx) },
   ];
 
-  // 4. Create alerts (with dedup) and send email notifications
+  // 5. Create alerts (with dedup) and send email notifications
   for (const { type, check } of checks) {
     const message = await check();
     if (message && !(await isDuplicate(ctx.vaultId, ctx.deviceId, type))) {
@@ -425,6 +435,7 @@ export interface AccessLogEvent {
   location: { country: string | null; city: string | null };
   deviceId: string;
   hasAlert: boolean;
+  source?: PullSource;
   metadata?: {
     secretKey?: string;
     environment?: string;
@@ -527,6 +538,7 @@ export async function getAccessLog(
     location: { country: e.country, city: e.city },
     deviceId: e.deviceId,
     hasAlert: e.securityAlerts && e.securityAlerts.length > 0,
+    source: e.source as PullSource,
   }));
 
   // Map view events

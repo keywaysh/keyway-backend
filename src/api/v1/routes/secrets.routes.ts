@@ -7,7 +7,7 @@ import { getEncryptionService, sanitizeForLogging } from '../../../utils/encrypt
 import { sendData, NotFoundError, BadRequestError, PlanLimitError } from '../../../lib';
 import { trackEvent, AnalyticsEvents } from '../../../utils/analytics';
 import { logActivity, extractRequestInfo, detectPlatform, trashSecretsByIds, recordSecretAccesses, recordSecretAccess } from '../../../services';
-import { processPullEvent, generateDeviceId } from '../../../services/security.service';
+import { processPullEvent, generateDeviceId, type PullSource } from '../../../services/security.service';
 import { canWriteToVault } from '../../../services/usage.service';
 import { repoFullNameSchema, DEFAULT_ENVIRONMENTS } from '../../../types';
 import type { RecordAccessContext, SecretAccessRecord } from '../../../services';
@@ -346,12 +346,16 @@ export async function secretsRoutes(fastify: FastifyInstance) {
         request.headers['user-agent'] || null,
         request.ip || 'unknown'
       );
+      // Determine pull source for audit trail and alert filtering
+      const platform = detectPlatform(request);
+      const pullSource: PullSource = request.apiKey ? 'api_key' : platform === 'mcp' ? 'mcp' : 'cli';
       processPullEvent({
         userId: user.id,
         vaultId: vault.id,
         deviceId,
         ip: request.ip || 'unknown',
         userAgent: request.headers['user-agent'] || null,
+        source: pullSource,
       }).catch(err => fastify.log.error(err, 'Security detection failed'));
 
       // Fire-and-forget exposure tracking - record which secrets this user accessed

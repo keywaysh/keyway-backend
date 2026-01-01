@@ -267,6 +267,7 @@ export const activityLogs = pgTable('activity_logs', {
 });
 
 // Pull events for security detection (preserved on user/vault deletion for compliance)
+// source: 'cli' (OAuth user), 'api_key' (PAT/CI), 'mcp' (AI agent)
 export const pullEvents = pgTable('pull_events', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -278,6 +279,7 @@ export const pullEvents = pgTable('pull_events', {
   city: text('city'),
   latitude: decimal('latitude', { precision: 10, scale: 6 }),
   longitude: decimal('longitude', { precision: 10, scale: 6 }),
+  source: text('source').notNull().default('cli'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 

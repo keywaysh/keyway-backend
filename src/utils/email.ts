@@ -62,7 +62,7 @@ keyway push</pre>
 
   <p>You can also manage your secrets from the dashboard:</p>
   <p style="margin-top: 16px;">
-    <a href="https://keyway.sh/dashboard" style="display: inline-block; background: #667eea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500;">Open Dashboard</a>
+    <a href="${config.app.dashboardUrl}" style="display: inline-block; background: #667eea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500;">Open Dashboard</a>
   </p>
 
   <p style="margin-top: 32px;">Since we're just getting started, I'd love your feedback. What's working? What's not? Just reply to this email — I read every message.</p>
@@ -101,7 +101,7 @@ Getting started takes 30 seconds:
 That's it! Your team can now pull secrets with "keyway pull".
 
 You can also manage your secrets from the dashboard:
-https://keyway.sh/dashboard
+${config.app.dashboardUrl}
 
 Since we're just getting started, I'd love your feedback. What's working? What's not? Just reply to this email — I read every message.
 
@@ -224,7 +224,7 @@ function getSecurityAlertEmailHtml(params: SecurityAlertEmailParams): string {
   </ol>
 
   <p style="margin-top: 24px;">
-    <a href="https://keyway.sh/dashboard/security#alerts" style="display: inline-block; background: #667eea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500;">View Security Alerts</a>
+    <a href="${config.app.dashboardUrl}/security#alerts" style="display: inline-block; background: #667eea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500;">View Security Alerts</a>
   </p>
 
   <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 32px 0;">
@@ -264,7 +264,7 @@ If this wasn't you: Your credentials may be compromised. We recommend:
 3. Consider rotating any secrets that may have been exposed
 
 View your security alerts:
-https://keyway.sh/dashboard/security#alerts
+${config.app.dashboardUrl}/security#alerts
 
 ---
 Keyway - GitHub-native secrets management
@@ -350,7 +350,7 @@ function getTrialStartedEmailHtml(params: TrialStartedEmailParams): string {
   <p>Your trial ends on <strong>${formattedDate}</strong>. You can upgrade anytime from your billing page.</p>
 
   <p style="margin-top: 24px;">
-    <a href="https://keyway.sh/dashboard/orgs/${params.orgName}/billing" style="display: inline-block; background: #667eea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500;">Open Dashboard</a>
+    <a href="${config.app.dashboardUrl}/orgs/${params.orgName}/billing" style="display: inline-block; background: #667eea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500;">Open Dashboard</a>
   </p>
 
   <p style="margin-top: 32px;">Questions? Just reply to this email — I'm happy to help.</p>
@@ -396,7 +396,7 @@ Your trial includes:
 Your trial ends on ${formattedDate}. You can upgrade anytime from your billing page.
 
 Open your dashboard:
-https://keyway.sh/dashboard/orgs/${params.orgName}/billing
+${config.app.dashboardUrl}/orgs/${params.orgName}/billing
 
 Questions? Just reply to this email — I'm happy to help.
 

@@ -224,7 +224,7 @@ function getSecurityAlertEmailHtml(params: SecurityAlertEmailParams): string {
   </ol>
 
   <p style="margin-top: 24px;">
-    <a href="https://keyway.sh/dashboard/security" style="display: inline-block; background: #667eea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500;">View Security Alerts</a>
+    <a href="https://keyway.sh/dashboard/security#alerts" style="display: inline-block; background: #667eea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500;">View Security Alerts</a>
   </p>
 
   <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 32px 0;">
@@ -264,7 +264,7 @@ If this wasn't you: Your credentials may be compromised. We recommend:
 3. Consider rotating any secrets that may have been exposed
 
 View your security alerts:
-https://keyway.sh/dashboard/security
+https://keyway.sh/dashboard/security#alerts
 
 ---
 Keyway - GitHub-native secrets management

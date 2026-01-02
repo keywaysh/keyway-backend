@@ -8,6 +8,14 @@ vi.mock('../../src/db', () => {
       findMany: vi.fn(),
       findFirst: vi.fn(),
     },
+    vaultEnvironments: {
+      findMany: vi.fn().mockResolvedValue([
+        { name: 'development', type: 'development', displayOrder: 0 },
+        { name: 'staging', type: 'standard', displayOrder: 1 },
+        { name: 'production', type: 'protected', displayOrder: 2 },
+      ]),
+      findFirst: vi.fn(),
+    },
   };
 
   return {
@@ -18,6 +26,7 @@ vi.mock('../../src/db', () => {
     },
     vaults: { id: 'id', ownerId: 'ownerId', isPrivate: 'isPrivate', createdAt: 'createdAt' },
     secrets: { id: 'id' },
+    vaultEnvironments: { id: 'id', vaultId: 'vaultId', name: 'name', type: 'type', displayOrder: 'displayOrder' },
   };
 });
 
@@ -81,11 +90,16 @@ describe('VaultService', () => {
         repoName: 'test-repo',
         repoAvatar: 'https://github.com/testuser.png',
         secretCount: 2, // Only active secrets
-        environments: mockVault.environments,
         permission: 'admin',
         isPrivate: false,
         isReadOnly: false,
       });
+      // Environments - string array for backwards compatibility
+      expect(result[0].environments).toHaveLength(3);
+      expect(result[0].environments[0]).toBe('development');
+      // Environment details - objects with name, type, displayOrder
+      expect(result[0].environmentDetails).toHaveLength(3);
+      expect(result[0].environmentDetails[0]).toMatchObject({ name: 'development', type: 'development' });
       expect(result[0].syncs).toHaveLength(1);
       expect(result[0].syncs[0].provider).toBe('vercel');
     });
@@ -98,6 +112,9 @@ describe('VaultService', () => {
         vaultSyncs: [],
       };
 
+      // Mock empty vaultEnvironments to simulate legacy vault
+      (db.query.vaultEnvironments.findMany as any).mockResolvedValue([]);
+
       (db.query.vaults.findMany as any).mockResolvedValue([legacyVault]);
       (db.select as any).mockReturnValue({
         from: vi.fn().mockReturnValue({
@@ -109,7 +126,12 @@ describe('VaultService', () => {
 
       const result = await getVaultsForUser(mockUser.id, mockUser.username, 'pro');
 
+      // Default environments - string array for backwards compatibility
+      expect(result[0].environments).toHaveLength(3);
       expect(result[0].environments).toEqual(['development', 'staging', 'production']);
+      // Full environment details with types
+      expect(result[0].environmentDetails).toHaveLength(3);
+      expect(result[0].environmentDetails.map((e: any) => e.name)).toEqual(['development', 'staging', 'production']);
     });
 
     it('should mark excess private vaults as read-only for free plan', async () => {

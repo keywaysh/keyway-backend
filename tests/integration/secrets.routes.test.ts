@@ -154,6 +154,7 @@ vi.mock('../../src/services', () => ({
   trashSecretsByIds: mockTrashSecretsByIds,
   recordSecretAccesses: vi.fn().mockResolvedValue(undefined),
   recordSecretAccess: vi.fn().mockResolvedValue(undefined),
+  getVaultEnvironmentNames: vi.fn().mockResolvedValue(['development', 'staging', 'production']),
 }));
 
 // Mock security service
@@ -238,18 +239,25 @@ describe('Secrets Routes', () => {
   });
 
   // Helper to set up authenticated request with valid vault
-  async function setupAuthenticatedVault(vaultOverrides = {}, secretsOverrides: any[] = []) {
+  async function setupAuthenticatedVault(vaultOverrides: Record<string, any> = {}, secretsOverrides: any[] = []) {
     const { db } = await import('../../src/db');
+    const { getVaultEnvironmentNames } = await import('../../src/services');
 
     // Mock user lookup in auth middleware
     (db.query.users.findFirst as any).mockResolvedValue(mockUserWithToken);
 
+    // Default environments
+    const environments = vaultOverrides.environments || ['development', 'staging', 'production'];
+
     // Mock vault
     (db.query.vaults.findFirst as any).mockResolvedValue({
       ...mockVault,
-      environments: ['development', 'staging', 'production'],
+      environments,
       ...vaultOverrides,
     });
+
+    // Mock getVaultEnvironmentNames to return the same environments
+    (getVaultEnvironmentNames as any).mockResolvedValue(environments);
 
     // Mock secrets
     (db.query.secrets.findMany as any).mockResolvedValue(secretsOverrides);

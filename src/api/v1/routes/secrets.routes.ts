@@ -17,6 +17,7 @@ import {
   trashSecretsByIds,
   recordSecretAccesses,
   recordSecretAccess,
+  getVaultEnvironmentNames,
 } from "../../../services";
 import {
   processPullEvent,
@@ -24,7 +25,7 @@ import {
   type PullSource,
 } from "../../../services/security.service";
 import { canWriteToVault } from "../../../services/usage.service";
-import { repoFullNameSchema, DEFAULT_ENVIRONMENTS } from "../../../types";
+import { repoFullNameSchema } from "../../../types";
 import type { RecordAccessContext, SecretAccessRecord } from "../../../services";
 
 // Security limits for secrets
@@ -161,10 +162,7 @@ export async function secretsRoutes(fastify: FastifyInstance) {
       }
 
       // Validate environment exists in vault's environment list
-      const vaultEnvs =
-        vault.environments && vault.environments.length > 0
-          ? vault.environments
-          : [...DEFAULT_ENVIRONMENTS];
+      const vaultEnvs = await getVaultEnvironmentNames(vault.id);
 
       if (!vaultEnvs.includes(body.environment)) {
         throw new BadRequestError(

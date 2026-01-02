@@ -34,6 +34,13 @@ export const collaboratorRoleEnum = pgEnum("collaborator_role", [
 // Permission types
 export const permissionTypeEnum = pgEnum("permission_type", ["read", "write"]);
 
+// Environment protection types (explicit, stored in vault_environments)
+export const environmentTypeEnum = pgEnum("environment_type", [
+  "protected", // Production-like: admin-only write, restricted read
+  "standard", // Staging/test: normal role-based access
+  "development", // Dev/local: permissive access
+]);
+
 // Activity action types
 export const activityActionEnum = pgEnum("activity_action", [
   "vault_created",
@@ -54,6 +61,7 @@ export const activityActionEnum = pgEnum("activity_action", [
   "environment_created",
   "environment_renamed",
   "environment_deleted",
+  "environment_type_changed",
   // Integration actions
   "integration_connected",
   "integration_disconnected",
@@ -184,6 +192,29 @@ export const vaults = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => [unique("vaults_forge_repo_unique").on(table.forgeType, table.repoFullName)]
+);
+
+// Vault environments with explicit protection type
+// This replaces the simple string array in vaults.environments
+export const vaultEnvironments = pgTable(
+  "vault_environments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    vaultId: uuid("vault_id")
+      .notNull()
+      .references(() => vaults.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    // Explicit type - not derived from name
+    type: environmentTypeEnum("type").notNull().default("standard"),
+    // Display order (for UI ordering)
+    displayOrder: integer("display_order").notNull().default(0),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // Each environment name must be unique within a vault
+    unique("vault_environments_vault_name_unique").on(table.vaultId, table.name),
+  ]
 );
 
 // Individual secrets (key-value pairs)
@@ -657,6 +688,7 @@ export const vaultsRelations = relations(vaults, ({ one, many }) => ({
     references: [vcsAppInstallations.id],
   }),
   secrets: many(secrets),
+  vaultEnvironments: many(vaultEnvironments),
   environmentPermissions: many(environmentPermissions),
   permissionOverrides: many(permissionOverrides),
   activityLogs: many(activityLogs),
@@ -665,6 +697,13 @@ export const vaultsRelations = relations(vaults, ({ one, many }) => ({
   vaultSyncs: many(vaultSyncs),
   syncLogs: many(syncLogs),
   secretAccesses: many(secretAccesses),
+}));
+
+export const vaultEnvironmentsRelations = relations(vaultEnvironments, ({ one }) => ({
+  vault: one(vaults, {
+    fields: [vaultEnvironments.vaultId],
+    references: [vaults.id],
+  }),
 }));
 
 export const secretsRelations = relations(secrets, ({ one, many }) => ({
@@ -877,6 +916,9 @@ export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Vault = typeof vaults.$inferSelect;
 export type NewVault = typeof vaults.$inferInsert;
+export type VaultEnvironment = typeof vaultEnvironments.$inferSelect;
+export type NewVaultEnvironment = typeof vaultEnvironments.$inferInsert;
+export type EnvironmentType = (typeof environmentTypeEnum.enumValues)[number];
 export type Secret = typeof secrets.$inferSelect;
 export type NewSecret = typeof secrets.$inferInsert;
 export type DeviceCode = typeof deviceCodes.$inferSelect;

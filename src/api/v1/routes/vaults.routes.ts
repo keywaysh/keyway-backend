@@ -5,7 +5,15 @@ import {
   requireAdminAccess,
   requireApiKeyScope,
 } from "../../../middleware/auth";
-import { db, vaults, secrets, environmentPermissions } from "../../../db";
+import {
+  db,
+  vaults,
+  secrets,
+  environmentPermissions,
+  vaultEnvironments,
+  permissionOverrides,
+} from "../../../db";
+import type { EnvironmentType } from "../../../db/schema";
 import {
   ensureOrganizationExists,
   getTrialEligibility,
@@ -18,6 +26,7 @@ import {
   getVaultPermissions,
   getDefaultPermission,
   requireEnvironmentPermission,
+  inferEnvironmentType,
 } from "../../../utils/permissions";
 import { getOrThrowUser, getUserFromVcsUser, type VcsUser } from "../../../utils/user-lookup";
 import type { CollaboratorRole } from "../../../db/schema";
@@ -38,6 +47,7 @@ import {
   getVaultsForUser,
   getVaultByRepo,
   getVaultByRepoInternal,
+  getVaultEnvironments,
   touchVault,
   getSecretsForVault,
   getSecretsCount,
@@ -145,6 +155,10 @@ const CreateEnvironmentSchema = z.object({
 
 const RenameEnvironmentSchema = z.object({
   newName: environmentNameSchema,
+});
+
+const UpdateEnvironmentTypeSchema = z.object({
+  type: z.enum(["protected", "standard", "development"]),
 });
 
 /**
@@ -287,9 +301,18 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
           ownerId: user.id,
           orgId: org?.id ?? null,
           isPrivate: repoInfo.isPrivate,
-          environments: [...DEFAULT_ENVIRONMENTS],
         })
         .returning();
+
+      // Create default environments in vault_environments table
+      await db.insert(vaultEnvironments).values(
+        DEFAULT_ENVIRONMENTS.map((name, index) => ({
+          vaultId: vault.id,
+          name,
+          type: inferEnvironmentType(name),
+          displayOrder: index,
+        }))
+      );
 
       // Recompute usage after creating vault
       await computeUserUsage(user.id);
@@ -1316,7 +1339,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
 
   /**
    * GET /:owner/:repo/environments
-   * List all environments for a vault
+   * List all environments for a vault with their types
    */
   fastify.get(
     "/:owner/:repo/environments",
@@ -1338,11 +1361,8 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
         throw new ForbiddenError("You do not have access to this vault");
       }
 
-      // Return vault.environments, fallback to defaults if empty/null (for pre-migration vaults)
-      const environments =
-        vault.environments && vault.environments.length > 0
-          ? vault.environments
-          : DEFAULT_ENVIRONMENTS;
+      // Get environments from vault_environments table
+      const environments = await getVaultEnvironments(vault.id);
 
       return sendData(reply, { environments }, { requestId: request.id });
     }
@@ -1371,11 +1391,8 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       // Get user for plan check
       const user = await getOrThrowUser(vcsUser);
 
-      // Get current environments, fallback to defaults
-      const currentEnvs =
-        vault.environments && vault.environments.length > 0
-          ? vault.environments
-          : [...DEFAULT_ENVIRONMENTS];
+      // Get current environments from table
+      const currentEnvs = await getVaultEnvironments(vault.id);
 
       // Check plan limit for environments
       const envCheck = canCreateEnvironment(user.plan, currentEnvs.length);
@@ -1384,16 +1401,26 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
       }
 
       // Check for duplicates
-      if (currentEnvs.includes(body.name)) {
+      if (currentEnvs.some((e) => e.name === body.name)) {
         throw new ConflictError(`Environment '${body.name}' already exists`);
       }
 
-      // Add new environment
-      const newEnvs = [...currentEnvs, body.name].sort();
-      await db
-        .update(vaults)
-        .set({ environments: newEnvs, updatedAt: new Date() })
-        .where(eq(vaults.id, vault.id));
+      // Calculate display order (add at end)
+      const maxOrder = Math.max(...currentEnvs.map((e) => e.displayOrder), -1);
+
+      // Insert new environment into vault_environments table
+      const [newEnv] = await db
+        .insert(vaultEnvironments)
+        .values({
+          vaultId: vault.id,
+          name: body.name,
+          type: inferEnvironmentType(body.name),
+          displayOrder: maxOrder + 1,
+        })
+        .returning();
+
+      // Update vault timestamp
+      await db.update(vaults).set({ updatedAt: new Date() }).where(eq(vaults.id, vault.id));
 
       // Log activity
       await logActivity({
@@ -1401,17 +1428,23 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
         action: "environment_created",
         platform: detectPlatform(request),
         vaultId: vault.id,
-        metadata: { environment: body.name, repoFullName },
+        metadata: { environment: body.name, type: newEnv.type, repoFullName },
         ...extractRequestInfo(request),
       });
 
-      fastify.log.info({ repoFullName, environment: body.name }, "Environment created");
+      fastify.log.info(
+        { repoFullName, environment: body.name, type: newEnv.type },
+        "Environment created"
+      );
+
+      // Get updated environments list
+      const updatedEnvs = await getVaultEnvironments(vault.id);
 
       return sendCreated(
         reply,
         {
-          environment: body.name,
-          environments: newEnvs,
+          environment: { name: newEnv.name, type: newEnv.type, displayOrder: newEnv.displayOrder },
+          environments: updatedEnvs,
         },
         { requestId: request.id }
       );
@@ -1439,32 +1472,27 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
         throw new NotFoundError("Vault not found");
       }
 
-      // Get current environments
-      const currentEnvs =
-        vault.environments && vault.environments.length > 0
-          ? vault.environments
-          : [...DEFAULT_ENVIRONMENTS];
+      // Get current environments from table
+      const currentEnvs = await getVaultEnvironments(vault.id);
+      const currentEnvNames = currentEnvs.map((e) => e.name);
 
       // Check old name exists
-      if (!currentEnvs.includes(oldName)) {
+      if (!currentEnvNames.includes(oldName)) {
         throw new NotFoundError(`Environment '${oldName}' not found`);
       }
 
       // Check new name doesn't already exist
-      if (currentEnvs.includes(body.newName)) {
+      if (currentEnvNames.includes(body.newName)) {
         throw new ConflictError(`Environment '${body.newName}' already exists`);
       }
 
-      // Update environments array
-      const newEnvs = currentEnvs.map((e) => (e === oldName ? body.newName : e)).sort();
-
       // Perform all updates in a transaction
       await db.transaction(async (tx) => {
-        // Update vault environments
+        // Update vault_environments table
         await tx
-          .update(vaults)
-          .set({ environments: newEnvs, updatedAt: new Date() })
-          .where(eq(vaults.id, vault.id));
+          .update(vaultEnvironments)
+          .set({ name: body.newName, updatedAt: new Date() })
+          .where(and(eq(vaultEnvironments.vaultId, vault.id), eq(vaultEnvironments.name, oldName)));
 
         // Update all secrets with old environment name
         await tx
@@ -1482,6 +1510,20 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
               eq(environmentPermissions.environment, oldName)
             )
           );
+
+        // Update permission overrides if any
+        await tx
+          .update(permissionOverrides)
+          .set({ environment: body.newName, updatedAt: new Date() })
+          .where(
+            and(
+              eq(permissionOverrides.vaultId, vault.id),
+              eq(permissionOverrides.environment, oldName)
+            )
+          );
+
+        // Update vault timestamp
+        await tx.update(vaults).set({ updatedAt: new Date() }).where(eq(vaults.id, vault.id));
       });
 
       // Log activity
@@ -1499,12 +1541,15 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
 
       fastify.log.info({ repoFullName, oldName, newName: body.newName }, "Environment renamed");
 
+      // Get updated environments list
+      const updatedEnvs = await getVaultEnvironments(vault.id);
+
       return sendData(
         reply,
         {
           oldName,
           newName: body.newName,
-          environments: newEnvs,
+          environments: updatedEnvs,
         },
         { requestId: request.id }
       );
@@ -1531,14 +1576,12 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
         throw new NotFoundError("Vault not found");
       }
 
-      // Get current environments
-      const currentEnvs =
-        vault.environments && vault.environments.length > 0
-          ? vault.environments
-          : [...DEFAULT_ENVIRONMENTS];
+      // Get current environments from table
+      const currentEnvs = await getVaultEnvironments(vault.id);
+      const currentEnvNames = currentEnvs.map((e) => e.name);
 
       // Check environment exists
-      if (!currentEnvs.includes(envName)) {
+      if (!currentEnvNames.includes(envName)) {
         throw new NotFoundError(`Environment '${envName}' not found`);
       }
 
@@ -1547,16 +1590,12 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
         throw new ForbiddenError("Cannot delete the last environment");
       }
 
-      // Remove from environments array
-      const newEnvs = currentEnvs.filter((e) => e !== envName);
-
       // Perform all updates in a transaction
       await db.transaction(async (tx) => {
-        // Update vault environments
+        // Delete from vault_environments table
         await tx
-          .update(vaults)
-          .set({ environments: newEnvs, updatedAt: new Date() })
-          .where(eq(vaults.id, vault.id));
+          .delete(vaultEnvironments)
+          .where(and(eq(vaultEnvironments.vaultId, vault.id), eq(vaultEnvironments.name, envName)));
 
         // Delete all secrets in this environment
         await tx
@@ -1572,6 +1611,19 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
               eq(environmentPermissions.environment, envName)
             )
           );
+
+        // Delete permission overrides
+        await tx
+          .delete(permissionOverrides)
+          .where(
+            and(
+              eq(permissionOverrides.vaultId, vault.id),
+              eq(permissionOverrides.environment, envName)
+            )
+          );
+
+        // Update vault timestamp
+        await tx.update(vaults).set({ updatedAt: new Date() }).where(eq(vaults.id, vault.id));
       });
 
       // Log activity
@@ -1589,11 +1641,88 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
 
       fastify.log.info({ repoFullName, environment: envName }, "Environment deleted");
 
+      // Get updated environments list
+      const updatedEnvs = await getVaultEnvironments(vault.id);
+
       return sendData(
         reply,
         {
           deleted: envName,
-          environments: newEnvs,
+          environments: updatedEnvs,
+        },
+        { requestId: request.id }
+      );
+    }
+  );
+
+  /**
+   * PATCH /:owner/:repo/environments/:name/type
+   * Update the protection type of an environment
+   */
+  fastify.patch(
+    "/:owner/:repo/environments/:name/type",
+    {
+      preHandler: [authenticateGitHub, requireApiKeyScope("write:secrets"), requireAdminAccess],
+    },
+    async (request, reply) => {
+      const params = request.params as { owner: string; repo: string; name: string };
+      const repoFullName = `${params.owner}/${params.repo}`;
+      const envName = params.name;
+      const body = UpdateEnvironmentTypeSchema.parse(request.body);
+      const vcsUser = request.vcsUser || request.githubUser!;
+
+      const vault = await getVaultByRepoInternal(repoFullName);
+      if (!vault) {
+        throw new NotFoundError("Vault not found");
+      }
+
+      // Find the environment in the table
+      const env = await db.query.vaultEnvironments.findFirst({
+        where: and(eq(vaultEnvironments.vaultId, vault.id), eq(vaultEnvironments.name, envName)),
+      });
+
+      if (!env) {
+        throw new NotFoundError(`Environment '${envName}' not found`);
+      }
+
+      const oldType = env.type;
+
+      // Update the environment type
+      await db
+        .update(vaultEnvironments)
+        .set({
+          type: body.type as EnvironmentType,
+          updatedAt: new Date(),
+        })
+        .where(eq(vaultEnvironments.id, env.id));
+
+      // Update vault timestamp
+      await db.update(vaults).set({ updatedAt: new Date() }).where(eq(vaults.id, vault.id));
+
+      // Log activity
+      const user = await getUserFromVcsUser(vcsUser);
+      if (user) {
+        await logActivity({
+          userId: user.id,
+          action: "environment_type_changed",
+          platform: detectPlatform(request),
+          vaultId: vault.id,
+          metadata: { environment: envName, oldType, newType: body.type, repoFullName },
+          ...extractRequestInfo(request),
+        });
+      }
+
+      fastify.log.info(
+        { repoFullName, environment: envName, oldType, newType: body.type },
+        "Environment type changed"
+      );
+
+      return sendData(
+        reply,
+        {
+          environment: envName,
+          oldType,
+          newType: body.type,
         },
         { requestId: request.id }
       );

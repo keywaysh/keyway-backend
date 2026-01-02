@@ -93,12 +93,15 @@ vi.mock('../../src/db', () => {
         },
       },
       insert: vi.fn().mockReturnValue({
-        values: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([mockVault]),
-          onConflictDoUpdate: vi.fn().mockReturnValue({
+        values: vi.fn().mockImplementation(() => {
+          // Create a thenable that also has returning/onConflict methods
+          const valuesResult = Promise.resolve(undefined);
+          (valuesResult as any).returning = vi.fn().mockResolvedValue([mockVault]);
+          (valuesResult as any).onConflictDoUpdate = vi.fn().mockReturnValue({
             returning: vi.fn().mockResolvedValue([mockVault]),
-          }),
-          onConflictDoNothing: vi.fn().mockResolvedValue(undefined),
+          });
+          (valuesResult as any).onConflictDoNothing = vi.fn().mockResolvedValue(undefined);
+          return valuesResult;
         }),
       }),
       update: vi.fn().mockReturnValue({
@@ -127,7 +130,7 @@ vi.mock('../../src/db', () => {
     vcsAppInstallationRepos: { repoFullName: 'repoFullName' },
     activityLogs: { id: 'id' },
     usageMetrics: { userId: 'userId' },
-    vaultEnvironments: { vaultId: 'vaultId' },
+    vaultEnvironments: { id: 'id', vaultId: 'vaultId', name: 'name', type: 'type', displayOrder: 'displayOrder' },
     organizations: { id: 'id', forgeType: 'forgeType', forgeOrgId: 'forgeOrgId', login: 'login' },
     organizationMembers: { id: 'id', orgId: 'orgId', userId: 'userId' },
   };
@@ -204,6 +207,12 @@ vi.mock('../../src/services/vault.service', () => ({
   createVault: vi.fn().mockResolvedValue(mockVault),
   touchVault: vi.fn().mockResolvedValue(undefined),
   canWriteToVault: vi.fn().mockResolvedValue(true),
+  getVaultEnvironments: vi.fn().mockResolvedValue([
+    { name: 'development', type: 'development', displayOrder: 0 },
+    { name: 'staging', type: 'standard', displayOrder: 1 },
+    { name: 'production', type: 'protected', displayOrder: 2 },
+  ]),
+  getVaultEnvironmentNames: vi.fn().mockResolvedValue(['development', 'staging', 'production']),
 }));
 
 // Mock permissions utils
@@ -213,6 +222,13 @@ vi.mock('../../src/utils/permissions', () => ({
   resolveEffectivePermission: vi.fn().mockResolvedValue(true),
   getEffectivePermissions: vi.fn().mockResolvedValue({ development: { read: true, write: true } }),
   requireEnvironmentPermission: vi.fn().mockResolvedValue(undefined), // Resolves without throwing = permission granted
+  inferEnvironmentType: vi.fn().mockImplementation((env: string) => {
+    const baseEnv = env.split(':')[0].toLowerCase();
+    if (['production', 'prod', 'main', 'master'].includes(baseEnv)) return 'protected';
+    if (['development', 'dev', 'local', 'preview'].includes(baseEnv)) return 'development';
+    return 'standard';
+  }),
+  getEnvironmentType: vi.fn().mockReturnValue('standard'),
 }));
 
 // Mock config/plans
@@ -272,6 +288,12 @@ vi.mock('../../src/services', () => ({
   getPrivateVaultAccess: vi.fn().mockResolvedValue({ allowedVaultIds: new Set(), excessVaultIds: new Set() }),
   recordSecretAccesses: vi.fn().mockResolvedValue(undefined),
   recordSecretAccess: vi.fn().mockResolvedValue(undefined),
+  getVaultEnvironments: vi.fn().mockResolvedValue([
+    { name: 'development', type: 'development', displayOrder: 0 },
+    { name: 'staging', type: 'standard', displayOrder: 1 },
+    { name: 'production', type: 'protected', displayOrder: 2 },
+  ]),
+  getVaultEnvironmentNames: vi.fn().mockResolvedValue(['development', 'staging', 'production']),
 }));
 
 describe('Vaults Routes', () => {

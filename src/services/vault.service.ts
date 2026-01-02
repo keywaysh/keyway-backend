@@ -1,11 +1,12 @@
-import { db, vaults } from "../db";
+import { db, vaults, vaultEnvironments } from "../db";
 import { eq, desc, and, asc } from "drizzle-orm";
 import { getUserRoleWithApp } from "../utils/github";
-import type { UserPlan } from "../db/schema";
+import type { UserPlan, EnvironmentType } from "../db/schema";
 import { PLANS } from "../config/plans";
 import { DEFAULT_ENVIRONMENTS } from "../types";
 import { getOrganizationById } from "./organization.service";
 import { getEffectivePlanWithTrial } from "./trial.service";
+import { inferEnvironmentType } from "../utils/permissions";
 
 // Helper to get GitHub avatar URL for a repo owner
 function getGitHubAvatarUrl(owner: string): string {
@@ -35,13 +36,20 @@ export interface VaultSyncInfo {
   lastSyncedAt: string | null;
 }
 
+export interface VaultEnvironmentInfo {
+  name: string;
+  type: EnvironmentType;
+  displayOrder: number;
+}
+
 export interface VaultListItem {
   id: string;
   repoOwner: string;
   repoName: string;
   repoAvatar: string;
   secretCount: number;
-  environments: string[];
+  environments: string[]; // Array of environment names for backwards compatibility
+  environmentDetails: VaultEnvironmentInfo[]; // Full environment info with types
   permission: string | null;
   isPrivate: boolean;
   isReadOnly: boolean;
@@ -56,7 +64,8 @@ export interface VaultDetails {
   repoName: string;
   repoAvatar: string;
   secretCount: number;
-  environments: string[];
+  environments: string[]; // Array of environment names for backwards compatibility
+  environmentDetails: VaultEnvironmentInfo[]; // Full environment info with types
   permission: string | null;
   isPrivate: boolean;
   isReadOnly: boolean;
@@ -89,6 +98,40 @@ async function getExcessPrivateVaultIds(userId: string, plan: UserPlan): Promise
 }
 
 /**
+ * Get environments for a vault from vault_environments table
+ * Falls back to creating default environments if none exist (pre-migration vaults)
+ */
+export async function getVaultEnvironments(vaultId: string): Promise<VaultEnvironmentInfo[]> {
+  const envs = await db.query.vaultEnvironments.findMany({
+    where: eq(vaultEnvironments.vaultId, vaultId),
+    orderBy: [asc(vaultEnvironments.displayOrder), asc(vaultEnvironments.name)],
+  });
+
+  // If no environments exist, return defaults with inferred types
+  if (envs.length === 0) {
+    return DEFAULT_ENVIRONMENTS.map((name, index) => ({
+      name,
+      type: inferEnvironmentType(name),
+      displayOrder: index,
+    }));
+  }
+
+  return envs.map((env) => ({
+    name: env.name,
+    type: env.type,
+    displayOrder: env.displayOrder,
+  }));
+}
+
+/**
+ * Get environment names for a vault (for simple list operations)
+ */
+export async function getVaultEnvironmentNames(vaultId: string): Promise<string[]> {
+  const envs = await getVaultEnvironments(vaultId);
+  return envs.map((e) => e.name);
+}
+
+/**
  * Get all vaults for a user with their metadata
  * Uses GitHub App token to check user's permission on each repo
  */
@@ -116,11 +159,8 @@ export async function getVaultsForUser(
     ownedVaults.map(async (vault) => {
       const [repoOwner, repoName] = vault.repoFullName.split("/");
 
-      // Use vault's defined environments, fallback to defaults for pre-migration vaults
-      const environments =
-        vault.environments && vault.environments.length > 0
-          ? vault.environments
-          : [...DEFAULT_ENVIRONMENTS];
+      // Get environments from vault_environments table
+      const environments = await getVaultEnvironments(vault.id);
 
       // Fetch user's permission for this repo using GitHub App token
       const permission = await getUserRoleWithApp(vault.repoFullName, username);
@@ -163,7 +203,8 @@ export async function getVaultsForUser(
         repoAvatar: getGitHubAvatarUrl(repoOwner),
         // Only count active secrets (not deleted)
         secretCount: vault.secrets.filter((s) => s.deletedAt === null).length,
-        environments,
+        environments: environments.map((e) => e.name), // String array for backwards compatibility
+        environmentDetails: environments, // Full environment info with types
         permission,
         isPrivate: vault.isPrivate,
         isReadOnly,
@@ -207,11 +248,8 @@ export async function getVaultByRepo(
 
   const [repoOwner, repoName] = vault.repoFullName.split("/");
 
-  // Use vault's defined environments, fallback to defaults for pre-migration vaults
-  const environments =
-    vault.environments && vault.environments.length > 0
-      ? vault.environments
-      : [...DEFAULT_ENVIRONMENTS];
+  // Get environments from vault_environments table
+  const environments = await getVaultEnvironments(vault.id);
 
   // Determine if vault is read-only based on plan limits
   let isReadOnly = false;
@@ -248,7 +286,8 @@ export async function getVaultByRepo(
       repoAvatar: getGitHubAvatarUrl(repoOwner),
       // Only count active secrets (not deleted)
       secretCount: vault.secrets.filter((s) => s.deletedAt === null).length,
-      environments,
+      environments: environments.map((e) => e.name), // String array for backwards compatibility
+      environmentDetails: environments, // Full environment info with types
       permission: role,
       isPrivate: vault.isPrivate,
       isReadOnly,

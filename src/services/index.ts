@@ -3,9 +3,12 @@ export {
   getVaultsForUser,
   getVaultByRepo,
   getVaultByRepoInternal,
+  getVaultEnvironments,
+  getVaultEnvironmentNames,
   touchVault,
   type VaultListItem,
   type VaultDetails,
+  type VaultEnvironmentInfo,
 } from "./vault.service";
 
 // Secret service

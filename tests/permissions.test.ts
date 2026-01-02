@@ -349,5 +349,20 @@ describe('Cross-environment sync validation', () => {
       expect(getEnvironmentType('feature-branch')).toBe('standard');
       expect(getEnvironmentType('preview-123')).toBe('standard');
     });
+
+    it('should handle Railway serviceId format (env:serviceId)', () => {
+      // Railway appends serviceId with colon - must still detect protection level
+      expect(getEnvironmentType('production:service-123')).toBe('protected');
+      expect(getEnvironmentType('prod:abc-def-456')).toBe('protected');
+      expect(getEnvironmentType('staging:service-id')).toBe('standard');
+      expect(getEnvironmentType('development:local-svc')).toBe('development');
+      expect(getEnvironmentType('dev:my-service')).toBe('development');
+    });
+
+    it('should handle multiple colons in serviceId', () => {
+      // Edge case: serviceId might contain colons
+      expect(getEnvironmentType('production:svc:with:colons')).toBe('protected');
+      expect(getEnvironmentType('dev:a:b:c')).toBe('development');
+    });
   });
 });

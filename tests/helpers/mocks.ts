@@ -102,6 +102,15 @@ export const mockVault = {
 };
 
 /**
+ * Mock vault environments for the new vault_environments table
+ */
+export const mockVaultEnvironments = [
+  { id: 'env-1', vaultId: mockVault.id, name: 'development', type: 'development' as const, displayOrder: 0 },
+  { id: 'env-2', vaultId: mockVault.id, name: 'staging', type: 'standard' as const, displayOrder: 1 },
+  { id: 'env-3', vaultId: mockVault.id, name: 'production', type: 'protected' as const, displayOrder: 2 },
+];
+
+/**
  * Mock secret data for testing
  */
 export const mockSecret = {
@@ -213,6 +222,7 @@ export function createMockDb(overrides: {
   vaults?: typeof mockVault | null;
   secrets?: typeof mockSecret[];
   deviceCodes?: typeof mockDeviceCode | null;
+  vaultEnvironments?: typeof mockVaultEnvironments;
 } = {}) {
   const mockQuery = {
     users: {
@@ -230,15 +240,34 @@ export function createMockDb(overrides: {
     deviceCodes: {
       findFirst: vi.fn().mockResolvedValue(overrides.deviceCodes ?? mockDeviceCode),
     },
+    vaultEnvironments: {
+      findFirst: vi.fn().mockResolvedValue(overrides.vaultEnvironments?.[0] ?? mockVaultEnvironments[0]),
+      findMany: vi.fn().mockResolvedValue(overrides.vaultEnvironments ?? mockVaultEnvironments),
+    },
   };
 
   // Create chainable insert/update/delete methods
-  const createChain = (returnValue: any) => ({
-    values: vi.fn().mockReturnThis(),
-    set: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    returning: vi.fn().mockResolvedValue([returnValue]),
-  });
+  // values() and where() must be thenable for operations without .returning()
+  const createChain = (returnValue: any) => {
+    const createThenable = () => {
+      const result = Promise.resolve(undefined);
+      (result as any).returning = vi.fn().mockResolvedValue([returnValue]);
+      (result as any).onConflictDoNothing = vi.fn().mockReturnValue(result);
+      (result as any).onConflictDoUpdate = vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([returnValue]),
+      });
+      return result;
+    };
+
+    return {
+      values: vi.fn().mockImplementation(createThenable),
+      set: vi.fn().mockReturnValue({
+        where: vi.fn().mockImplementation(createThenable),
+      }),
+      where: vi.fn().mockImplementation(createThenable),
+      returning: vi.fn().mockResolvedValue([returnValue]),
+    };
+  };
 
   const dbMock = {
     query: mockQuery,
@@ -254,11 +283,27 @@ export function createMockDb(overrides: {
     }),
     // Transaction support - execute callback with same mock
     transaction: vi.fn().mockImplementation(async (callback: (tx: any) => Promise<any>) => {
+      // Create thenable for chainable operations
+      const createTxThenable = () => Promise.resolve(undefined);
       // Create a transaction mock that has the same methods as db
       const txMock = {
-        update: vi.fn().mockReturnValue(createChain(mockUser)),
-        delete: vi.fn().mockReturnValue(createChain(null)),
-        insert: vi.fn().mockReturnValue(createChain(mockUser)),
+        update: vi.fn().mockReturnValue({
+          set: vi.fn().mockReturnValue({
+            where: vi.fn().mockImplementation(createTxThenable),
+          }),
+        }),
+        delete: vi.fn().mockReturnValue({
+          where: vi.fn().mockImplementation(createTxThenable),
+        }),
+        insert: vi.fn().mockImplementation(() => {
+          const result = createTxThenable();
+          (result as any).values = vi.fn().mockImplementation(() => {
+            const valuesResult = createTxThenable();
+            (valuesResult as any).returning = vi.fn().mockResolvedValue([mockUser]);
+            return valuesResult;
+          });
+          return result;
+        }),
       };
       return callback(txMock);
     }),

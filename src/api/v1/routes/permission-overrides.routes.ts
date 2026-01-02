@@ -19,6 +19,7 @@ import {
   getOverrideById,
   resetVaultOverrides,
 } from "../../../services/permission-override.service";
+import { getVaultEnvironmentNames } from "../../../services";
 import {
   DEFAULT_ROLE_PERMISSIONS,
   getEffectivePermissionsForUser,
@@ -452,12 +453,8 @@ export async function permissionOverridesRoutes(fastify: FastifyInstance) {
       }
 
       // Get effective permissions for all environments
-      const effective = await getEffectivePermissionsForUser(
-        vault.id,
-        user.id,
-        role,
-        vault.environments || ["local", "development", "staging", "production"]
-      );
+      const environments = await getVaultEnvironmentNames(vault.id);
+      const effective = await getEffectivePermissionsForUser(vault.id, user.id, role, environments);
 
       return sendData(
         reply,

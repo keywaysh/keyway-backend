@@ -1,7 +1,11 @@
 import { db } from "../db";
-import { environmentPermissions, vaults } from "../db/schema";
+import { environmentPermissions, vaults, vaultEnvironments } from "../db/schema";
 import { eq, and } from "drizzle-orm";
-import type { CollaboratorRole, PermissionType } from "../db/schema";
+import type {
+  CollaboratorRole,
+  PermissionType,
+  EnvironmentType as DbEnvironmentType,
+} from "../db/schema";
 import { findApplicableOverride } from "../services/permission-override.service";
 import { ForbiddenError } from "../lib";
 
@@ -27,26 +31,69 @@ export function roleHasLevel(userRole: CollaboratorRole, requiredRole: Collabora
 // Environment Classification
 // ============================================================================
 
-export type EnvironmentType = "protected" | "standard" | "development";
+// Re-export the DB type for backward compatibility
+export type EnvironmentType = DbEnvironmentType;
 
 /**
- * Classify an environment name into a type
+ * Infer environment type from name (for initial detection / fallback)
+ *
+ * Used when:
+ * - Creating a new environment (auto-detect initial type)
+ * - Environment not yet in vault_environments table (fallback)
+ *
+ * Note: The stored type in vault_environments takes precedence.
+ * This function is only for inference when no stored type exists.
+ *
+ * Handles compound formats like "production:serviceId" (Railway)
  */
-export function getEnvironmentType(environment: string): EnvironmentType {
-  const env = environment.toLowerCase();
+export function inferEnvironmentType(environment: string): EnvironmentType {
+  // Handle compound formats like "production:serviceId" (Railway)
+  // Extract the base environment name before any colon
+  const baseEnv = environment.split(":")[0].toLowerCase();
 
   // Protected environments (production)
-  if (["production", "prod", "main", "master"].includes(env)) {
+  if (["production", "prod", "main", "master"].includes(baseEnv)) {
     return "protected";
   }
 
   // Development environments
-  if (["dev", "development", "local"].includes(env)) {
+  if (["dev", "development", "local"].includes(baseEnv)) {
     return "development";
   }
 
   // Standard environments (staging, test, qa, etc.)
   return "standard";
+}
+
+/**
+ * @deprecated Use inferEnvironmentType for name-based detection
+ * or getStoredEnvironmentType for explicit type lookup
+ */
+export const getEnvironmentType = inferEnvironmentType;
+
+/**
+ * Get the explicitly stored environment type from the database
+ *
+ * Resolution order:
+ * 1. Look up in vault_environments table (explicit type)
+ * 2. Fall back to name-based inference if not found
+ *
+ * @returns The environment type and whether it was from DB or inferred
+ */
+export async function getStoredEnvironmentType(
+  vaultId: string,
+  environmentName: string
+): Promise<{ type: EnvironmentType; isExplicit: boolean }> {
+  const stored = await db.query.vaultEnvironments.findFirst({
+    where: and(eq(vaultEnvironments.vaultId, vaultId), eq(vaultEnvironments.name, environmentName)),
+  });
+
+  if (stored) {
+    return { type: stored.type, isExplicit: true };
+  }
+
+  // Fall back to name-based inference
+  return { type: inferEnvironmentType(environmentName), isExplicit: false };
 }
 
 // ============================================================================
@@ -125,6 +172,52 @@ const LEGACY_DEFAULT_PERMISSIONS: Record<
 };
 
 // ============================================================================
+// Organization Default Permissions Helpers
+// ============================================================================
+
+/**
+ * Safely extract a permission from organization defaultPermissions JSONB
+ *
+ * Validates the structure at each level to prevent crashes from malformed data.
+ * Returns null if the path doesn't exist or is invalid.
+ */
+function getOrgDefaultPermission(
+  defaultPermissions: unknown,
+  role: CollaboratorRole,
+  envType: EnvironmentType,
+  permissionType: PermissionType
+): boolean | null {
+  // Validate top-level is an object
+  if (!defaultPermissions || typeof defaultPermissions !== "object") {
+    return null;
+  }
+
+  const perms = defaultPermissions as Record<string, unknown>;
+
+  // Validate role level exists and is an object
+  const rolePerms = perms[role];
+  if (!rolePerms || typeof rolePerms !== "object") {
+    return null;
+  }
+
+  const envPerms = (rolePerms as Record<string, unknown>)[envType];
+
+  // Validate environment level exists and is an object
+  if (!envPerms || typeof envPerms !== "object") {
+    return null;
+  }
+
+  const permission = (envPerms as Record<string, unknown>)[permissionType];
+
+  // Validate final value is a boolean
+  if (typeof permission !== "boolean") {
+    return null;
+  }
+
+  return permission;
+}
+
+// ============================================================================
 // Permission Resolution (New System with Overrides)
 // ============================================================================
 
@@ -136,6 +229,9 @@ const LEGACY_DEFAULT_PERMISSIONS: Record<
  * 2. Role-specific override (vault + env + role)
  * 3. Org-level defaults (if vault belongs to an org)
  * 4. Global defaults (DEFAULT_ROLE_PERMISSIONS matrix)
+ *
+ * Environment type is resolved from vault_environments table (explicit)
+ * with fallback to name-based inference if not stored.
  */
 export async function resolveEffectivePermission(
   vaultId: string,
@@ -150,6 +246,9 @@ export async function resolveEffectivePermission(
     return permissionType === "read" ? override.canRead : override.canWrite;
   }
 
+  // Get environment type (explicit from DB or inferred from name)
+  const { type: envType } = await getStoredEnvironmentType(vaultId, environment);
+
   // 2. Check for org-level default permissions
   const vault = await db.query.vaults.findFirst({
     where: eq(vaults.id, vaultId),
@@ -157,20 +256,19 @@ export async function resolveEffectivePermission(
   });
 
   if (vault?.organization?.defaultPermissions) {
-    const orgDefaults = vault.organization.defaultPermissions as Record<
-      CollaboratorRole,
-      Record<EnvironmentType, { read: boolean; write: boolean }>
-    >;
-    const envType = getEnvironmentType(environment);
-
-    // Check if org has custom defaults for this role/envType
-    if (orgDefaults[userRole]?.[envType]?.[permissionType] !== undefined) {
-      return orgDefaults[userRole][envType][permissionType];
+    // Safely extract permission from JSONB with type validation
+    const permission = getOrgDefaultPermission(
+      vault.organization.defaultPermissions,
+      userRole,
+      envType,
+      permissionType
+    );
+    if (permission !== null) {
+      return permission;
     }
   }
 
   // 3. Fall back to global defaults
-  const envType = getEnvironmentType(environment);
   const defaults = DEFAULT_ROLE_PERMISSIONS[userRole][envType];
   return permissionType === "read" ? defaults.read : defaults.write;
 }
@@ -343,6 +441,7 @@ const ENVIRONMENT_PROTECTION_LEVEL: Record<EnvironmentType, number> = {
 
 /**
  * Check if a sync operation between two environments is allowed based on role
+ * Uses name-based type inference (for tests and simple cases)
  *
  * Rules:
  * - Syncing to a MORE protected environment requires admin role
@@ -361,9 +460,45 @@ export function canSyncBetweenEnvironments(
   targetEnv: string,
   userRole: CollaboratorRole
 ): { allowed: boolean; reason?: string } {
-  const sourceType = getEnvironmentType(sourceEnv);
-  const targetType = getEnvironmentType(targetEnv);
+  const sourceType = inferEnvironmentType(sourceEnv);
+  const targetType = inferEnvironmentType(targetEnv);
 
+  return checkSyncProtectionLevels(sourceType, targetType, userRole);
+}
+
+/**
+ * Check sync permission using explicit environment types
+ * Use this when you have vault context and can look up stored types
+ *
+ * @param direction - "push" means Keyway→Provider, "pull" means Provider→Keyway
+ */
+export async function canSyncBetweenEnvironmentsAsync(
+  vaultId: string,
+  keywayEnv: string,
+  providerEnv: string,
+  direction: "push" | "pull",
+  userRole: CollaboratorRole
+): Promise<{ allowed: boolean; reason?: string }> {
+  // Keyway env uses stored type, provider env uses inference (external)
+  const { type: keywayType } = await getStoredEnvironmentType(vaultId, keywayEnv);
+  const providerType = inferEnvironmentType(providerEnv);
+
+  // Push: Keyway is source, Provider is target
+  // Pull: Provider is source, Keyway is target
+  const sourceType = direction === "push" ? keywayType : providerType;
+  const targetType = direction === "push" ? providerType : keywayType;
+
+  return checkSyncProtectionLevels(sourceType, targetType, userRole);
+}
+
+/**
+ * Core sync protection check logic
+ */
+function checkSyncProtectionLevels(
+  sourceType: EnvironmentType,
+  targetType: EnvironmentType,
+  userRole: CollaboratorRole
+): { allowed: boolean; reason?: string } {
   const sourceLevel = ENVIRONMENT_PROTECTION_LEVEL[sourceType];
   const targetLevel = ENVIRONMENT_PROTECTION_LEVEL[targetType];
 
@@ -388,6 +523,7 @@ export function canSyncBetweenEnvironments(
  *
  * Combines:
  * 1. Cross-environment protection check (dev → prod requires admin)
+ *    Uses stored environment type for Keyway env, inferred for provider env
  * 2. Standard environment permission check (read/write based on direction)
  *
  * @throws ForbiddenError if sync is not allowed
@@ -400,14 +536,14 @@ export async function requireSyncPermission(
   userId: string,
   userRole: CollaboratorRole
 ): Promise<void> {
-  // Determine source and target based on direction
-  // Push: Keyway → Provider (Keyway is source, Provider is target)
-  // Pull: Provider → Keyway (Provider is source, Keyway is target)
-  const sourceEnv = direction === "push" ? keywayEnv : providerEnv;
-  const targetEnv = direction === "push" ? providerEnv : keywayEnv;
-
-  // 1. Check cross-environment protection
-  const crossEnvCheck = canSyncBetweenEnvironments(sourceEnv, targetEnv, userRole);
+  // 1. Check cross-environment protection using stored type for Keyway env
+  const crossEnvCheck = await canSyncBetweenEnvironmentsAsync(
+    vaultId,
+    keywayEnv,
+    providerEnv,
+    direction,
+    userRole
+  );
   if (!crossEnvCheck.allowed) {
     throw new ForbiddenError(crossEnvCheck.reason!);
   }

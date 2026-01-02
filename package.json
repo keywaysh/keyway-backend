@@ -21,7 +21,7 @@
     "format:check": "prettier --check src/",
     "validate": "pnpm run lint && bash scripts/pre-push.sh",
     "deploy:check": "pnpm run type-check && pnpm run build",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "lint-staged": {
     "src/**/*.ts": [

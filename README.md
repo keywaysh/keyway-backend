@@ -53,7 +53,7 @@ keyway-backend/
 ### 1. Install Dependencies
 
 ```bash
-npm install
+pnpm install
 ```
 
 ### 2. Configure Environment Variables
@@ -352,22 +352,22 @@ Delete an environment and all its secrets.
 
 ```bash
 # Install dependencies
-npm install
+pnpm install
 
 # Run in development mode (auto-reload)
-npm run dev
+pnpm dev
 
 # Build for production
-npm run build
+pnpm build
 
 # Type check
-npm run type-check
+pnpm run type-check
 
 # Generate database migrations
-npm run db:generate
+pnpm run db:generate
 
 # Run database migrations
-npm run db:migrate
+pnpm run db:migrate
 ```
 
 ## Deployment
@@ -488,12 +488,12 @@ See [POSTHOG_CHECKLIST.md](./POSTHOG_CHECKLIST.md) for details.
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start development server with auto-reload |
-| `npm run build` | Build for production |
-| `npm start` | Start production server |
-| `npm run type-check` | Run TypeScript type checking |
-| `npm run db:generate` | Generate database migrations |
-| `npm run db:migrate` | Run database migrations |
+| `pnpm dev` | Start development server with auto-reload |
+| `pnpm build` | Build for production |
+| `pnpm start` | Start production server |
+| `pnpm run type-check` | Run TypeScript type checking |
+| `pnpm run db:generate` | Generate database migrations |
+| `pnpm run db:migrate` | Run database migrations |
 
 ## Environment Variables
 

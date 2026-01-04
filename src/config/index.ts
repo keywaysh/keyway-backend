@@ -70,6 +70,8 @@ const envSchema = z
     STRIPE_PRICE_PRO_YEARLY: z.string().optional(),
     STRIPE_PRICE_TEAM_MONTHLY: z.string().optional(),
     STRIPE_PRICE_TEAM_YEARLY: z.string().optional(),
+    STRIPE_PRICE_STARTUP_MONTHLY: z.string().optional(),
+    STRIPE_PRICE_STARTUP_YEARLY: z.string().optional(),
 
     // Frontend URLs (for redirects after auth)
     FRONTEND_URL: z.string().url().optional(), // Landing page (marketing)
@@ -214,6 +216,8 @@ export const config = {
           proYearly: env.STRIPE_PRICE_PRO_YEARLY,
           teamMonthly: env.STRIPE_PRICE_TEAM_MONTHLY,
           teamYearly: env.STRIPE_PRICE_TEAM_YEARLY,
+          startupMonthly: env.STRIPE_PRICE_STARTUP_MONTHLY,
+          startupYearly: env.STRIPE_PRICE_STARTUP_YEARLY,
         },
       }
     : undefined,

@@ -288,6 +288,13 @@
       "when": 1767400000000,
       "tag": "0040_add_vault_environments_table",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "5",
+      "when": 1767500000000,
+      "tag": "0041_add_startup_plan",
+      "breakpoints": true
     }
   ]
 }

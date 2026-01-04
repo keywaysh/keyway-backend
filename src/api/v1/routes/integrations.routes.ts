@@ -14,6 +14,7 @@ import {
   deleteConnection,
   listProviderProjects,
   listAllProviderProjects,
+  linkVaultToProject,
   getSyncStatus,
   getSyncDiff,
   getSyncPreview,
@@ -594,6 +595,57 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
 
       const result = await listAllProviderProjects(user.id, providerName);
       return sendData(reply, result, { requestId: request.id });
+    }
+  );
+
+  /**
+   * POST /vaults/:owner/:repo/sync/link
+   * Link a vault to a provider project without syncing
+   * This saves the project selection so users can cancel and resume later
+   */
+  fastify.post(
+    "/vaults/:owner/:repo/sync/link",
+    {
+      preHandler: [authenticateGitHub, requireApiKeyScope("read:secrets")],
+    },
+    async (request, reply) => {
+      const { owner, repo } = request.params as { owner: string; repo: string };
+      const body = z
+        .object({
+          connectionId: z.string().uuid(),
+          projectId: z.string(),
+          keywayEnvironment: z.string().default("production"),
+          providerEnvironment: z.string().default("production"),
+        })
+        .parse(request.body);
+
+      const vault = await verifyVaultAccess(
+        (request.vcsUser || request.githubUser!).username,
+        owner,
+        repo
+      );
+
+      const user = await db.query.users.findFirst({
+        where: and(
+          eq(users.forgeType, (request.vcsUser || request.githubUser!).forgeType),
+          eq(users.forgeUserId, (request.vcsUser || request.githubUser!).forgeUserId)
+        ),
+      });
+
+      if (!user) {
+        throw new NotFoundError("User not found");
+      }
+
+      const link = await linkVaultToProject(
+        vault.id,
+        body.connectionId,
+        body.projectId,
+        body.keywayEnvironment,
+        body.providerEnvironment,
+        user.id
+      );
+
+      return sendData(reply, { link }, { requestId: request.id });
     }
   );
 

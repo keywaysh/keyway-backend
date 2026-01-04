@@ -15,35 +15,49 @@ export interface PlanLimits {
   maxEnvironmentsPerVault: number;
   /** Maximum number of secrets per private vault (public vaults are unlimited) */
   maxSecretsPerPrivateVault: number;
+  /** Maximum number of collaborators per vault */
+  maxCollaboratorsPerVault: number;
 }
 
 /**
  * Plan definitions
- * - free: Limited features (1 private repo, 2 providers, 4 envs, unlimited secrets)
- * - pro: Unlimited everything
- * - team: Unlimited everything (for organizations)
+ * - free: 1 private repo, 2 providers, 3 envs, 15 collaborators
+ * - pro: 5 private repos, unlimited providers/envs, 15 collaborators ($4/month)
+ * - team: 10 private repos, unlimited providers/envs, 15 collaborators ($15/month)
+ * - startup: 40 private repos, unlimited providers/envs, 30 collaborators ($39/month)
  */
 export const PLANS: Record<UserPlan, PlanLimits> = {
   free: {
     maxPublicRepos: Infinity,
     maxPrivateRepos: 1,
     maxProviders: 2,
-    maxEnvironmentsPerVault: 4,
+    maxEnvironmentsPerVault: 3,
     maxSecretsPerPrivateVault: Infinity,
+    maxCollaboratorsPerVault: 15,
   },
   pro: {
     maxPublicRepos: Infinity,
-    maxPrivateRepos: Infinity,
+    maxPrivateRepos: 5,
     maxProviders: Infinity,
     maxEnvironmentsPerVault: Infinity,
     maxSecretsPerPrivateVault: Infinity,
+    maxCollaboratorsPerVault: 15,
   },
   team: {
     maxPublicRepos: Infinity,
-    maxPrivateRepos: Infinity,
+    maxPrivateRepos: 10,
     maxProviders: Infinity,
     maxEnvironmentsPerVault: Infinity,
     maxSecretsPerPrivateVault: Infinity,
+    maxCollaboratorsPerVault: 15,
+  },
+  startup: {
+    maxPublicRepos: Infinity,
+    maxPrivateRepos: 40,
+    maxProviders: Infinity,
+    maxEnvironmentsPerVault: Infinity,
+    maxSecretsPerPrivateVault: Infinity,
+    maxCollaboratorsPerVault: 30,
   },
 } as const;
 
@@ -62,17 +76,11 @@ export function canCreateRepo(
   currentPublicCount: number,
   currentPrivateCount: number,
   isPrivate: boolean,
-  isOrganization: boolean
+  _isOrganization: boolean
 ): { allowed: boolean; reason?: string } {
-  // Block PRIVATE organization repos for free/pro plans
-  // Public org repos are allowed for all plans
-  if (isOrganization && isPrivate && plan !== "team") {
-    return {
-      allowed: false,
-      reason:
-        "Private organization repositories require a Team plan. Upgrade to use private repos from GitHub organizations.",
-    };
-  }
+  // Note: isOrganization parameter kept for backwards compatibility but no longer restricts access
+  // All plans can now create repos in personal accounts or organizations
+  // Org-specific features (exposure, audit, permissions) are still gated on Team+ plans
 
   const limits = getPlanLimits(plan);
 

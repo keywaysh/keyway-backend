@@ -47,6 +47,9 @@ function getPlanFromPriceId(priceId: string): UserPlan | null {
   if (priceId === prices.teamMonthly || priceId === prices.teamYearly) {
     return "team";
   }
+  if (priceId === prices.startupMonthly || priceId === prices.startupYearly) {
+    return "startup";
+  }
   return null;
 }
 
@@ -304,7 +307,7 @@ async function handleSubscriptionChange(subscription: Stripe.Subscription): Prom
 }
 
 /**
- * Get numeric rank for plan comparison (free=0, pro=1, team=2)
+ * Get numeric rank for plan comparison (free=0, pro=1, team=2, startup=3)
  */
 function getPlanRank(plan: UserPlan): number {
   switch (plan) {
@@ -314,6 +317,8 @@ function getPlanRank(plan: UserPlan): number {
       return 1;
     case "team":
       return 2;
+    case "startup":
+      return 3;
     default:
       return 0;
   }
@@ -511,6 +516,10 @@ export function getAvailablePrices() {
     team: {
       monthly: config.stripe.prices.teamMonthly,
       yearly: config.stripe.prices.teamYearly,
+    },
+    startup: {
+      monthly: config.stripe.prices.startupMonthly,
+      yearly: config.stripe.prices.startupYearly,
     },
   };
 }

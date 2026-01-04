@@ -16,23 +16,34 @@ describe('Plan Configuration', () => {
         maxPublicRepos: Infinity,
         maxPrivateRepos: 1,
         maxProviders: 2,
-        maxEnvironmentsPerVault: 4,
+        maxEnvironmentsPerVault: 3,
         maxSecretsPerPrivateVault: Infinity,
+        maxCollaboratorsPerVault: 15,
       });
     });
 
-    it('should define pro plan with unlimited values', () => {
-      expect(PLANS.pro.maxPrivateRepos).toBe(Infinity);
+    it('should define pro plan with 5 private repos and unlimited envs', () => {
+      expect(PLANS.pro.maxPrivateRepos).toBe(5);
       expect(PLANS.pro.maxProviders).toBe(Infinity);
       expect(PLANS.pro.maxEnvironmentsPerVault).toBe(Infinity);
       expect(PLANS.pro.maxSecretsPerPrivateVault).toBe(Infinity);
+      expect(PLANS.pro.maxCollaboratorsPerVault).toBe(15);
     });
 
-    it('should define team plan with unlimited values', () => {
-      expect(PLANS.team.maxPrivateRepos).toBe(Infinity);
+    it('should define team plan with 10 private repos and unlimited envs', () => {
+      expect(PLANS.team.maxPrivateRepos).toBe(10);
       expect(PLANS.team.maxProviders).toBe(Infinity);
       expect(PLANS.team.maxEnvironmentsPerVault).toBe(Infinity);
       expect(PLANS.team.maxSecretsPerPrivateVault).toBe(Infinity);
+      expect(PLANS.team.maxCollaboratorsPerVault).toBe(15);
+    });
+
+    it('should define startup plan with 40 private repos and 30 collaborators', () => {
+      expect(PLANS.startup.maxPrivateRepos).toBe(40);
+      expect(PLANS.startup.maxProviders).toBe(Infinity);
+      expect(PLANS.startup.maxEnvironmentsPerVault).toBe(Infinity);
+      expect(PLANS.startup.maxSecretsPerPrivateVault).toBe(Infinity);
+      expect(PLANS.startup.maxCollaboratorsPerVault).toBe(30);
     });
   });
 
@@ -41,6 +52,7 @@ describe('Plan Configuration', () => {
       expect(getPlanLimits('free')).toBe(PLANS.free);
       expect(getPlanLimits('pro')).toBe(PLANS.pro);
       expect(getPlanLimits('team')).toBe(PLANS.team);
+      expect(getPlanLimits('startup')).toBe(PLANS.startup);
     });
   });
 
@@ -74,20 +86,35 @@ describe('Plan Limit Checks', () => {
       expect(result.reason).toContain('1 private repo');
     });
 
-    it('should block private org repos on free plan', () => {
+    it('should allow free plan private org repos within limit', () => {
+      // Free plan can now create private org repos, but still limited to 1 total private repo
       const result = canCreateRepo('free', 0, 0, true, true);
+      expect(result.allowed).toBe(true);
+    });
+
+    it('should reject free plan second private org repo', () => {
+      // Org repos count toward the same limit as personal repos
+      const result = canCreateRepo('free', 0, 1, true, true);
       expect(result.allowed).toBe(false);
-      expect(result.reason).toContain('Team plan');
+      expect(result.reason).toContain('1 private repo');
     });
 
-    it('should allow pro plan unlimited private repos', () => {
-      const result = canCreateRepo('pro', 0, 100, true, false);
+    it('should allow pro plan up to 5 private repos', () => {
+      const result = canCreateRepo('pro', 0, 4, true, false);
       expect(result.allowed).toBe(true);
     });
 
-    it('should allow team plan private org repos', () => {
-      const result = canCreateRepo('team', 0, 0, true, true);
-      expect(result.allowed).toBe(true);
+    it('should deny pro plan 6th private repo', () => {
+      const result = canCreateRepo('pro', 0, 5, true, false);
+      expect(result.allowed).toBe(false);
+    });
+
+    it('should allow all plans to create private org repos within their limits', () => {
+      // All plans can create private org repos, limited by their maxPrivateRepos
+      expect(canCreateRepo('free', 0, 0, true, true).allowed).toBe(true);
+      expect(canCreateRepo('pro', 0, 0, true, true).allowed).toBe(true);
+      expect(canCreateRepo('team', 0, 0, true, true).allowed).toBe(true);
+      expect(canCreateRepo('startup', 0, 0, true, true).allowed).toBe(true);
     });
   });
 
@@ -110,15 +137,16 @@ describe('Plan Limit Checks', () => {
   });
 
   describe('canCreateEnvironment', () => {
-    it('should allow free plan first two environments', () => {
+    it('should allow free plan first three environments', () => {
       expect(canCreateEnvironment('free', 0).allowed).toBe(true);
       expect(canCreateEnvironment('free', 1).allowed).toBe(true);
+      expect(canCreateEnvironment('free', 2).allowed).toBe(true);
     });
 
-    it('should reject free plan fifth environment', () => {
-      const result = canCreateEnvironment('free', 4);
+    it('should reject free plan fourth environment', () => {
+      const result = canCreateEnvironment('free', 3);
       expect(result.allowed).toBe(false);
-      expect(result.reason).toContain('4 environments');
+      expect(result.reason).toContain('3 environments');
     });
 
     it('should allow pro plan unlimited environments', () => {

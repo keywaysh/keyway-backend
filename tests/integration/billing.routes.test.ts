@@ -72,6 +72,10 @@ describe('Billing Routes', () => {
         monthly: 'price_team_monthly',
         yearly: 'price_team_yearly',
       },
+      startup: {
+        monthly: 'price_startup_monthly',
+        yearly: 'price_startup_yearly',
+      },
     });
     mockGetUserSubscription.mockResolvedValue(null);
     mockCreateCheckoutSession.mockResolvedValue('https://checkout.stripe.com/session/123');

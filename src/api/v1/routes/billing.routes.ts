@@ -62,24 +62,36 @@ export async function billingRoutes(fastify: FastifyInstance) {
           pro: {
             monthly: {
               id: prices?.pro.monthly,
-              price: 900, // $9.00 in cents
+              price: 400, // $4.00 in cents
               interval: "month",
             },
             yearly: {
               id: prices?.pro.yearly,
-              price: 9000, // $90.00 in cents
+              price: 4000, // $40.00 in cents
               interval: "year",
             },
           },
           team: {
             monthly: {
               id: prices?.team.monthly,
-              price: 2900, // $29.00 in cents
+              price: 1500, // $15.00 in cents
               interval: "month",
             },
             yearly: {
               id: prices?.team.yearly,
-              price: 29000, // $290.00 in cents
+              price: 15000, // $150.00 in cents
+              interval: "year",
+            },
+          },
+          startup: {
+            monthly: {
+              id: prices?.startup.monthly,
+              price: 3900, // $39.00 in cents
+              interval: "month",
+            },
+            yearly: {
+              id: prices?.startup.yearly,
+              price: 39000, // $390.00 in cents
               interval: "year",
             },
           },

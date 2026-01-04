@@ -12,12 +12,16 @@ describe('Soft Limits - Business Logic', () => {
       expect(PLANS.free.maxPrivateRepos).toBe(1);
     });
 
-    it('pro plan should have unlimited private repos', () => {
-      expect(PLANS.pro.maxPrivateRepos).toBe(Infinity);
+    it('pro plan should have maxPrivateRepos = 5', () => {
+      expect(PLANS.pro.maxPrivateRepos).toBe(5);
     });
 
-    it('team plan should have unlimited private repos', () => {
-      expect(PLANS.team.maxPrivateRepos).toBe(Infinity);
+    it('team plan should have maxPrivateRepos = 10', () => {
+      expect(PLANS.team.maxPrivateRepos).toBe(10);
+    });
+
+    it('startup plan should have maxPrivateRepos = 40', () => {
+      expect(PLANS.startup.maxPrivateRepos).toBe(40);
     });
   });
 
@@ -44,7 +48,7 @@ describe('Soft Limits - Business Logic', () => {
       return { allowedIds, excessIds };
     }
 
-    it('should mark all vaults as allowed for pro plan', () => {
+    it('should allow up to 5 vaults for pro plan', () => {
       const vaults = [
         { id: 'v1', createdAt: new Date('2024-01-01') },
         { id: 'v2', createdAt: new Date('2024-02-01') },
@@ -53,8 +57,8 @@ describe('Soft Limits - Business Logic', () => {
 
       const result = computeVaultAccess(vaults, 'pro');
 
-      // For unlimited plans, both sets are empty (special case)
-      expect(result.allowedIds.size).toBe(0);
+      // Pro plan allows 5 private repos, so 3 vaults should all be allowed
+      expect(result.allowedIds.size).toBe(3);
       expect(result.excessIds.size).toBe(0);
     });
 
@@ -149,14 +153,27 @@ describe('Soft Limits - Business Logic', () => {
       });
     });
 
-    describe('private vaults - pro/team plans', () => {
-      it('should allow writes to any private vault on pro plan', () => {
+    describe('private vaults - pro/team/startup plans', () => {
+      it('should allow writes to private vault within pro plan limit', () => {
+        // v1 is not in excess set, so it should be allowed
         const result = checkWritePermission('pro', true, 'v1', new Set());
         expect(result.allowed).toBe(true);
       });
 
-      it('should allow writes to any private vault on team plan', () => {
+      it('should deny writes to excess private vault on pro plan', () => {
+        // v6 is the 6th vault, exceeding the 5 vault limit for pro
+        const result = checkWritePermission('pro', true, 'v6', new Set(['v6']));
+        expect(result.allowed).toBe(false);
+      });
+
+      it('should allow writes to private vault within team plan limit', () => {
         const result = checkWritePermission('team', true, 'v1', new Set());
+        expect(result.allowed).toBe(true);
+      });
+
+      it('should allow writes to any private vault on startup plan', () => {
+        // Startup has 40 repos, testing with vault within limit
+        const result = checkWritePermission('startup', true, 'v1', new Set());
         expect(result.allowed).toBe(true);
       });
     });

@@ -498,6 +498,116 @@ export async function listAllProviderProjects(
 }
 
 /**
+ * Link info returned when linking a vault to a provider project
+ */
+export interface VaultSyncLink {
+  id: string;
+  vaultId: string;
+  connectionId: string;
+  provider: string;
+  projectId: string;
+  projectName: string | null;
+  keywayEnvironment: string;
+  providerEnvironment: string;
+  lastSyncedAt: Date | null;
+  isNew: boolean;
+}
+
+/**
+ * Link a vault to a provider project (without syncing)
+ * Creates the vault_sync record if it doesn't exist
+ * This allows users to "save" their project selection before actually syncing
+ */
+export async function linkVaultToProject(
+  vaultId: string,
+  connectionId: string,
+  projectId: string,
+  keywayEnvironment: string,
+  providerEnvironment: string,
+  userId: string
+): Promise<VaultSyncLink> {
+  // Validate connection belongs to the user (IDOR protection)
+  const connection = await db.query.providerConnections.findFirst({
+    where: and(eq(providerConnections.id, connectionId), eq(providerConnections.userId, userId)),
+  });
+
+  if (!connection) {
+    throw new Error("Connection not found");
+  }
+
+  const provider = getProvider(connection.provider);
+  if (!provider) {
+    throw new Error(`Provider ${connection.provider} not found`);
+  }
+
+  // Check if link already exists
+  let syncConfig = await db.query.vaultSyncs.findFirst({
+    where: and(
+      eq(vaultSyncs.vaultId, vaultId),
+      eq(vaultSyncs.connectionId, connectionId),
+      eq(vaultSyncs.providerProjectId, projectId),
+      eq(vaultSyncs.providerEnvironment, providerEnvironment)
+    ),
+  });
+
+  let isNew = false;
+
+  if (!syncConfig) {
+    // Get project name from provider
+    let projectName: string | undefined;
+    if (provider.getProject) {
+      try {
+        const accessToken = await getValidAccessToken(connection);
+        const project = await provider.getProject(
+          accessToken,
+          projectId,
+          connection.providerTeamId || undefined
+        );
+        projectName = project?.name;
+      } catch (error) {
+        logger.warn(
+          { projectId, error: error instanceof Error ? error.message : "Unknown" },
+          "Failed to fetch project name"
+        );
+      }
+    }
+
+    // Create the link
+    [syncConfig] = await db
+      .insert(vaultSyncs)
+      .values({
+        vaultId,
+        connectionId,
+        provider: connection.provider,
+        providerProjectId: projectId,
+        providerProjectName: projectName,
+        keywayEnvironment,
+        providerEnvironment,
+      })
+      .returning();
+
+    isNew = true;
+    logger.info(
+      { vaultId, projectId, provider: connection.provider },
+      "Created vault-project link"
+    );
+  }
+
+  return {
+    id: syncConfig.id,
+    vaultId: syncConfig.vaultId,
+    connectionId: syncConfig.connectionId,
+    provider: syncConfig.provider,
+    projectId: syncConfig.providerProjectId,
+    projectName: syncConfig.providerProjectName,
+    keywayEnvironment: syncConfig.keywayEnvironment,
+    providerEnvironment: syncConfig.providerEnvironment,
+    lastSyncedAt: syncConfig.lastSyncedAt,
+    isNew,
+  };
+}
+
+/**
  * Get sync status (for first-time detection)
  * Requires userId for ownership validation
  */

@@ -60,9 +60,6 @@ const envSchema = z
     // Email (Resend)
     RESEND_API_KEY: z.string().optional(),
 
-    // Admin
-    ADMIN_SECRET: z.string().min(32).optional(),
-
     // Stripe Billing
     STRIPE_SECRET_KEY: z.string().optional(),
     STRIPE_WEBHOOK_SECRET: z.string().optional(),
@@ -200,11 +197,6 @@ export const config = {
     enabled: !!env.RESEND_API_KEY,
     fromAddress: "Keyway <hello@mail.keyway.sh>",
     replyToAddress: "hello@keyway.sh",
-  },
-
-  admin: {
-    secret: env.ADMIN_SECRET,
-    enabled: !!env.ADMIN_SECRET,
   },
 
   stripe: env.STRIPE_SECRET_KEY

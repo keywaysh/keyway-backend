@@ -58,7 +58,7 @@ These environment variables are security-critical:
 | `GITHUB_APP_WEBHOOK_SECRET` | Required in production for webhook signature verification |
 | `GITHUB_APP_PRIVATE_KEY` | Base64-encoded PEM key, keep confidential |
 | `DATABASE_URL` | Use SSL connections in production |
-| `ENCRYPTION_KEY` | 32-byte hex string for AES-256 |
+| `CRYPTO_SERVICE_URL` | Address of keyway-crypto gRPC service |
 
 ### Production Checklist
 
@@ -68,7 +68,6 @@ These environment variables are security-critical:
 - [ ] Use strong, unique secrets for all credential environment variables
 - [ ] Enable database SSL (`?sslmode=require` in connection string)
 - [ ] Set up proper firewall rules for the crypto service
-- [ ] Review and restrict admin access (`ADMIN_SECRET`, `ADMIN_GITHUB_IDS`)
 
 ## Security Features
 

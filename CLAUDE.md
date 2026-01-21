@@ -98,11 +98,12 @@ const role = await getUserRole(token, repo, username);
 const canWrite = ['write', 'maintain', 'admin'].includes(role);
 ```
 
-**Encryption**:
+**Encryption** (via keyway-crypto gRPC service):
 ```typescript
-// AES-256-GCM with random IV per encryption
-const encrypted = encrypt(value, ENCRYPTION_KEY);
-const decrypted = decrypt(encrypted, ENCRYPTION_KEY);
+// AES-256-GCM - key is isolated in keyway-crypto service
+const encryptionService = await getEncryptionService();
+const encrypted = await encryptionService.encrypt(value);
+const decrypted = await encryptionService.decrypt(encrypted);
 ```
 
 ### Database (Drizzle ORM)
@@ -147,14 +148,13 @@ Tests use Vitest with mocked database (`tests/helpers/mocks.ts`).
 
 Required:
 - `DATABASE_URL`: PostgreSQL connection string
-- `ENCRYPTION_KEY`: 32-byte hex string for AES-256
-- `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`: OAuth app
+- `CRYPTO_SERVICE_URL`: keyway-crypto gRPC address
+- `GITHUB_APP_ID`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`: GitHub App
 - `JWT_SECRET`: For signing tokens
 
 Optional:
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`: Billing
 - `VERCEL_CLIENT_ID`, `VERCEL_CLIENT_SECRET`: Integration
-- `ADMIN_GITHUB_IDS`: Comma-separated GitHub user IDs
 
 ## Error Handling
 

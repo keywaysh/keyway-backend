@@ -45,7 +45,6 @@ function getWelcomeEmailHtml(username: string): string {
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #1a202c; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
   <div style="text-align: center; margin-bottom: 32px;">
-    <img src="https://keyway.sh/logo.svg" alt="Keyway" width="48" height="48" style="margin-bottom: 16px;">
     <h1 style="font-size: 24px; font-weight: 600; margin: 0;">Welcome to Keyway!</h1>
   </div>
 
@@ -194,10 +193,6 @@ function getSecurityAlertEmailHtml(params: SecurityAlertEmailParams): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #1a202c; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
-  <div style="text-align: center; margin-bottom: 32px;">
-    <img src="https://keyway.sh/logo.svg" alt="Keyway" width="48" height="48" style="margin-bottom: 16px;">
-  </div>
-
   <div style="background: ${severityBg}; border-left: 4px solid ${severityColor}; padding: 16px 20px; border-radius: 0 8px 8px 0; margin-bottom: 24px;">
     <h1 style="font-size: 20px; font-weight: 600; margin: 0 0 8px 0; color: ${severityColor};">
       ${alertConfig.emoji} ${alertConfig.title}
@@ -350,7 +345,6 @@ function getTrialStartedEmailHtml(params: TrialStartedEmailParams): string {
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #1a202c; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
   <div style="text-align: center; margin-bottom: 32px;">
-    <img src="https://keyway.sh/logo.svg" alt="Keyway" width="48" height="48" style="margin-bottom: 16px;">
     <h1 style="font-size: 24px; font-weight: 600; margin: 0;">Your Team trial has started!</h1>
   </div>
 

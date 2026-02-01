@@ -77,6 +77,26 @@ const envSchema = z
     // Sentry Error Tracking (optional)
     SENTRY_DSN: z.string().url().optional(),
     SENTRY_RELEASE: z.string().optional(),
+
+    // Self-hosting config
+    DOCS_URL: z.string().url().optional(),
+    ERROR_BASE_URL: z.string().url().optional(),
+    EMAIL_FROM_ADDRESS: z.string().optional(),
+    EMAIL_FROM_NAME: z.string().optional(),
+    BILLING_ENABLED: z
+      .string()
+      .optional()
+      .transform((val) => val !== "false"), // defaults to true
+    GITHUB_BASE_URL: z.string().url().optional(), // GitHub API URL (e.g., https://api.github.com or https://github.example.com/api/v3)
+    GITHUB_URL: z.string().url().optional(), // GitHub web URL for OAuth (e.g., https://github.com or https://github.example.com)
+    GITHUB_APP_INSTALL_URL: z.string().url().optional(),
+
+    // Rate limiting
+    RATE_LIMIT_MAX: z
+      .string()
+      .optional()
+      .transform((val) => (val ? Number(val) : 100)),
+    RATE_LIMIT_WINDOW: z.string().optional().default("15 minutes"),
   })
   .superRefine((data, ctx) => {
     // SECURITY: Webhook secret is required in production to prevent forged webhook attacks
@@ -123,6 +143,13 @@ export const config = {
     dashboardUrl:
       env.DASHBOARD_URL ||
       (env.NODE_ENV === "production" ? "https://app.keyway.sh" : "http://localhost:3000"),
+    // Docs URL
+    // Defaults: <frontendUrl>/docs (prod), http://localhost:3002 (dev)
+    docsUrl:
+      env.DOCS_URL ||
+      (env.NODE_ENV === "production"
+        ? `${env.FRONTEND_URL || "https://keyway.sh"}/docs`
+        : "http://localhost:3002"),
   },
 
   database: {
@@ -143,7 +170,10 @@ export const config = {
   github: {
     clientId: env.GITHUB_APP_CLIENT_ID,
     clientSecret: env.GITHUB_APP_CLIENT_SECRET,
-    apiBaseUrl: "https://api.github.com",
+    apiBaseUrl: env.GITHUB_BASE_URL || "https://api.github.com",
+    // Web URL for OAuth flows and user-facing links (defaults to https://github.com)
+    // For GitHub Enterprise: set to your GHE hostname (e.g., https://github.example.com)
+    url: env.GITHUB_URL || "https://github.com",
   },
 
   githubApp: {
@@ -151,7 +181,9 @@ export const config = {
     privateKey: Buffer.from(env.GITHUB_APP_PRIVATE_KEY, "base64").toString("utf8"),
     webhookSecret: env.GITHUB_APP_WEBHOOK_SECRET,
     name: env.GITHUB_APP_NAME,
-    installUrl: `https://github.com/apps/${env.GITHUB_APP_NAME}/installations/new`,
+    installUrl:
+      env.GITHUB_APP_INSTALL_URL ||
+      `https://github.com/apps/${env.GITHUB_APP_NAME}/installations/new`,
   },
 
   analytics: {
@@ -167,7 +199,10 @@ export const config = {
       env.ALLOWED_ORIGINS.length > 0
         ? env.ALLOWED_ORIGINS
         : env.NODE_ENV === "production"
-          ? ["https://keyway.sh", "https://app.keyway.sh"]
+          ? [
+              env.FRONTEND_URL || "https://keyway.sh",
+              env.DASHBOARD_URL || "https://app.keyway.sh",
+            ].filter(Boolean)
           : [],
     allowAll: env.ALLOWED_ORIGINS.length === 0 && env.NODE_ENV === "development",
   },
@@ -195,8 +230,8 @@ export const config = {
   email: {
     resendApiKey: env.RESEND_API_KEY,
     enabled: !!env.RESEND_API_KEY,
-    fromAddress: "Keyway <hello@mail.keyway.sh>",
-    replyToAddress: "hello@keyway.sh",
+    fromAddress: env.EMAIL_FROM_ADDRESS || "Keyway <hello@mail.keyway.sh>",
+    replyToAddress: env.EMAIL_FROM_NAME || "hello@keyway.sh",
   },
 
   stripe: env.STRIPE_SECRET_KEY
@@ -213,6 +248,19 @@ export const config = {
         },
       }
     : undefined,
+
+  billing: {
+    enabled: env.BILLING_ENABLED && !!env.STRIPE_SECRET_KEY,
+  },
+
+  rateLimit: {
+    max: env.RATE_LIMIT_MAX,
+    window: env.RATE_LIMIT_WINDOW,
+  },
+
+  errors: {
+    baseUrl: env.ERROR_BASE_URL || "https://api.keyway.sh/errors",
+  },
 
   sentry: env.SENTRY_DSN
     ? {

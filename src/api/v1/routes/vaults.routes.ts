@@ -84,6 +84,7 @@ import {
   getRepoCollaboratorsWithApp,
   getUserRoleWithApp,
 } from "../../../utils/github";
+import { config } from "../../../config";
 import { trackEvent, AnalyticsEvents } from "../../../utils/analytics";
 import { repoFullNameSchema, DEFAULT_ENVIRONMENTS } from "../../../types";
 import { getSecurityAlerts } from "../../../services/security.service";
@@ -279,7 +280,7 @@ export async function vaultsRoutes(fastify: FastifyInstance) {
         // Include trial eligibility info in error for org repos
         throw new PlanLimitError(
           limitCheck.reason!,
-          "https://keyway.sh/upgrade",
+          `${config.app.frontendUrl}/upgrade`,
           trialEligibility ?? undefined
         );
       }

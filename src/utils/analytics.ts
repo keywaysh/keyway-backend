@@ -136,7 +136,8 @@ export function getSignupSource(referer: string | undefined): string {
     }
 
     // Our own landing page
-    if (hostname.includes("keyway.sh")) {
+    const frontendHostname = new URL(config.app.frontendUrl).hostname;
+    if (hostname === frontendHostname || hostname.endsWith(`.${frontendHostname}`)) {
       if (pathname === "/" || pathname === "") {
         return "landing";
       }

@@ -34,18 +34,35 @@ import { sendData, sendNoContent } from "../../../lib/response";
 import { canConnectProvider } from "../../../config/plans";
 import { logActivity, extractRequestInfo, detectPlatform } from "../../../services";
 
-// Allowed redirect origins for OAuth callbacks
-const ALLOWED_REDIRECT_ORIGINS = [
-  // Production
-  "https://keyway.sh",
-  "https://api.keyway.sh",
-  // Test/Staging
-  "https://keyway.cloud",
-  "https://api.keyway.cloud",
-  // Local development
-  "http://localhost:3000",
-  "http://localhost:5173",
-];
+// Build allowed redirect origins from config
+function getAllowedRedirectOrigins(): string[] {
+  const origins = new Set<string>();
+
+  // Add configured origins
+  if (config.app.frontendUrl) {
+    origins.add(new URL(config.app.frontendUrl).origin);
+  }
+  if (config.app.dashboardUrl) {
+    origins.add(new URL(config.app.dashboardUrl).origin);
+  }
+
+  // Add explicitly configured CORS origins
+  for (const origin of config.cors.allowedOrigins) {
+    try {
+      origins.add(new URL(origin).origin);
+    } catch {
+      origins.add(origin);
+    }
+  }
+
+  // Always allow localhost in development
+  if (config.server.isDevelopment) {
+    origins.add("http://localhost:3000");
+    origins.add("http://localhost:5173");
+  }
+
+  return Array.from(origins);
+}
 
 // Schemas
 const SyncBodySchema = z.object({
@@ -350,7 +367,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
       if (query.redirect_uri) {
         try {
           const url = new URL(query.redirect_uri);
-          if (!ALLOWED_REDIRECT_ORIGINS.includes(url.origin)) {
+          if (!getAllowedRedirectOrigins().includes(url.origin)) {
             throw new ForbiddenError(`Invalid redirect origin: ${url.origin}`);
           }
           validatedRedirectUri = query.redirect_uri;
@@ -464,7 +481,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
           .send(
             renderErrorPage(
               "Provider Limit Reached",
-              `${providerCheck.reason} <a href="https://keyway.sh/upgrade">Upgrade your plan</a> to connect more providers.`
+              `${providerCheck.reason} <a href="${config.app.frontendUrl}/upgrade">Upgrade your plan</a> to connect more providers.`
             )
           );
       }
@@ -496,7 +513,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
       if (redirectUri) {
         try {
           const url = new URL(redirectUri);
-          if (!ALLOWED_REDIRECT_ORIGINS.includes(url.origin)) {
+          if (!getAllowedRedirectOrigins().includes(url.origin)) {
             fastify.log.warn(
               { redirectUri, origin: url.origin },
               "Invalid redirect origin attempted"
@@ -1076,7 +1093,7 @@ function renderErrorPage(title: string, message: string): string {
     <h1>${title}</h1>
     <p>${message}</p>
     <div class="help-link">
-      <a href="https://keyway.sh">Return to Keyway</a>
+      <a href="${config.app.frontendUrl}">Return to Keyway</a>
     </div>
   </div>
 </body>

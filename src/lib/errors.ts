@@ -21,7 +21,7 @@ export interface FieldError {
   message: string;
 }
 
-const ERROR_BASE_URL = config.errors.baseUrl;
+const ERROR_BASE_URL = config.errors?.baseUrl || "https://api.keyway.sh/errors";
 
 /**
  * Base class for RFC 7807 compliant errors

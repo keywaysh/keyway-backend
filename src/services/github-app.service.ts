@@ -14,7 +14,7 @@ import { ForbiddenError, NotFoundError } from "../lib";
 import { getEncryptionService } from "../utils/encryption";
 import { logger } from "../utils/sharedLogger";
 
-const GITHUB_API_BASE = config.github.apiBaseUrl;
+const GITHUB_API_BASE = config.github?.apiBaseUrl || "https://api.github.com";
 
 // JWT expires in 10 minutes (GitHub maximum)
 const JWT_EXPIRY_SECONDS = 10 * 60;

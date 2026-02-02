@@ -39,15 +39,15 @@ function getAllowedRedirectOrigins(): string[] {
   const origins = new Set<string>();
 
   // Add configured origins
-  if (config.app.frontendUrl) {
+  if (config.app?.frontendUrl) {
     origins.add(new URL(config.app.frontendUrl).origin);
   }
-  if (config.app.dashboardUrl) {
+  if (config.app?.dashboardUrl) {
     origins.add(new URL(config.app.dashboardUrl).origin);
   }
 
   // Add explicitly configured CORS origins
-  for (const origin of config.cors.allowedOrigins) {
+  for (const origin of config.cors?.allowedOrigins || []) {
     try {
       origins.add(new URL(origin).origin);
     } catch {
@@ -481,7 +481,7 @@ export async function integrationsRoutes(fastify: FastifyInstance) {
           .send(
             renderErrorPage(
               "Provider Limit Reached",
-              `${providerCheck.reason} <a href="${config.app.frontendUrl}/upgrade">Upgrade your plan</a> to connect more providers.`
+              `${providerCheck.reason} <a href="${config.app?.frontendUrl || ""}/upgrade">Upgrade your plan</a> to connect more providers.`
             )
           );
       }
@@ -1093,7 +1093,7 @@ function renderErrorPage(title: string, message: string): string {
     <h1>${title}</h1>
     <p>${message}</p>
     <div class="help-link">
-      <a href="${config.app.frontendUrl}">Return to Keyway</a>
+      <a href="${config.app?.frontendUrl || "/"}">Return to Keyway</a>
     </div>
   </div>
 </body>

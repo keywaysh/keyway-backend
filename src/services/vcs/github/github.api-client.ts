@@ -10,7 +10,7 @@ import { logger } from "../../../utils/sharedLogger";
 import { maskToken } from "../../../utils/logger";
 import type { CollaboratorRole } from "../../../db/schema";
 
-const GITHUB_API_BASE = config.github.apiBaseUrl;
+const GITHUB_API_BASE = config.github?.apiBaseUrl || "https://api.github.com";
 
 // ============================================================================
 // API Response Types

@@ -5,7 +5,7 @@ import { findInstallationForRepo, getInstallationToken } from "../services/githu
 import { logger } from "./sharedLogger";
 import { maskToken } from "./logger";
 
-const GITHUB_API_BASE = config.github.apiBaseUrl;
+const GITHUB_API_BASE = config.github?.apiBaseUrl || "https://api.github.com";
 
 /**
  * Token source type - always 'app' since we only use GitHub App tokens

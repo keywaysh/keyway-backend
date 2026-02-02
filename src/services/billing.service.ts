@@ -19,7 +19,7 @@ const stripe = config.stripe ? new Stripe(config.stripe.secretKey) : null;
  * Check if Stripe billing is enabled
  */
 export function isStripeEnabled(): boolean {
-  return stripe !== null && config.stripe !== undefined;
+  return config.billing.enabled && stripe !== null && config.stripe !== undefined;
 }
 
 /**
@@ -61,6 +61,9 @@ export async function getOrCreateStripeCustomer(
   email: string,
   username: string
 ): Promise<string> {
+  if (!config.billing.enabled) {
+    throw new Error("Billing is not enabled");
+  }
   const s = getStripe();
 
   // Check if user already has a Stripe customer ID
@@ -103,6 +106,9 @@ export async function createCheckoutSession(
   successUrl: string,
   cancelUrl: string
 ): Promise<string> {
+  if (!config.billing.enabled) {
+    throw new Error("Billing is not enabled");
+  }
   const s = getStripe();
 
   // Get or create customer
@@ -141,6 +147,9 @@ export async function createCheckoutSession(
  * Create a Stripe Customer Portal session
  */
 export async function createPortalSession(userId: string, returnUrl: string): Promise<string> {
+  if (!config.billing.enabled) {
+    throw new Error("Billing is not enabled");
+  }
   const s = getStripe();
 
   // Get user's Stripe customer ID
@@ -166,6 +175,10 @@ export async function createPortalSession(userId: string, returnUrl: string): Pr
  * Get user's current subscription
  */
 export async function getUserSubscription(userId: string) {
+  if (!config.billing.enabled) {
+    return null;
+  }
+
   const [subscription] = await db
     .select()
     .from(subscriptions)
@@ -444,6 +457,9 @@ function mapStripeToBillingStatus(
  * Construct and verify a Stripe webhook event
  */
 export function constructWebhookEvent(payload: Buffer, signature: string): Stripe.Event {
+  if (!config.billing.enabled) {
+    throw new Error("Billing is not enabled");
+  }
   const s = getStripe();
 
   if (!config.stripe?.webhookSecret) {
@@ -457,6 +473,11 @@ export function constructWebhookEvent(payload: Buffer, signature: string): Strip
  * Handle a Stripe webhook event
  */
 export async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
+  if (!config.billing.enabled) {
+    logger.debug("Billing is disabled, skipping webhook event");
+    return;
+  }
+
   // Check idempotency
   if (await isEventProcessed(event.id)) {
     logger.debug({ eventId: event.id }, "Event already processed");
@@ -504,7 +525,7 @@ export async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
  * Get available prices for checkout
  */
 export function getAvailablePrices() {
-  if (!config.stripe) {
+  if (!config.billing.enabled || !config.stripe) {
     return null;
   }
 
@@ -536,6 +557,9 @@ export async function getOrCreateOrgStripeCustomer(
   orgLogin: string,
   ownerEmail: string
 ): Promise<string> {
+  if (!config.billing.enabled) {
+    throw new Error("Billing is not enabled");
+  }
   const s = getStripe();
 
   // Check if org already has a Stripe customer ID
@@ -577,6 +601,9 @@ export async function createOrgCheckoutSession(
   successUrl: string,
   cancelUrl: string
 ): Promise<string> {
+  if (!config.billing.enabled) {
+    throw new Error("Billing is not enabled");
+  }
   const s = getStripe();
 
   // Validate that the price is a Team plan price
@@ -626,6 +653,9 @@ export async function createOrgCheckoutSession(
  * Create a Stripe Customer Portal session for organization
  */
 export async function createOrgPortalSession(orgId: string, returnUrl: string): Promise<string> {
+  if (!config.billing.enabled) {
+    throw new Error("Billing is not enabled");
+  }
   const s = getStripe();
 
   // Get org's Stripe customer ID
@@ -709,6 +739,13 @@ export async function handleOrgSubscriptionDeleted(
  * Get organization billing status
  */
 export async function getOrgBillingStatus(orgId: string) {
+  if (!config.billing.enabled) {
+    return {
+      plan: "team" as const,
+      hasStripeCustomer: false,
+    };
+  }
+
   const [org] = await db
     .select({
       plan: organizations.plan,

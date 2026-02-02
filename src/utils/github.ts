@@ -5,7 +5,7 @@ import { findInstallationForRepo, getInstallationToken } from "../services/githu
 import { logger } from "./sharedLogger";
 import { maskToken } from "./logger";
 
-const GITHUB_API_BASE = config.github.apiBaseUrl;
+const GITHUB_API_BASE = config.github?.apiBaseUrl || "https://api.github.com";
 
 /**
  * Token source type - always 'app' since we only use GitHub App tokens
@@ -81,7 +81,7 @@ interface GitHubTokenErrorResponse {
  * Exchange GitHub OAuth code for access token
  */
 export async function exchangeCodeForToken(code: string): Promise<string> {
-  const response = await fetch("https://github.com/login/oauth/access_token", {
+  const response = await fetch(`${config.github.url}/login/oauth/access_token`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

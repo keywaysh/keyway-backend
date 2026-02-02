@@ -18,7 +18,7 @@ import { config } from "../../config";
 import { logger } from "../../utils/sharedLogger";
 
 const VERCEL_API_BASE = "https://api.vercel.com";
-const VERCEL_INTEGRATION_SLUG = "keyway";
+const VERCEL_INTEGRATION_SLUG = process.env.VERCEL_INTEGRATION_SLUG || "keyway";
 
 const DEFAULT_TIMEOUT_MS = 30000; // 30 seconds
 

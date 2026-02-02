@@ -551,7 +551,7 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     const callbackUri = buildCallbackUrl(request);
 
-    const githubAuthUrl = new URL("https://github.com/login/oauth/authorize");
+    const githubAuthUrl = new URL(`${config.github.url}/login/oauth/authorize`);
     githubAuthUrl.searchParams.set("client_id", config.github.clientId);
     githubAuthUrl.searchParams.set("redirect_uri", callbackUri);
     githubAuthUrl.searchParams.set("scope", "read:user user:email read:org");
@@ -824,7 +824,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       const state = signState({ deviceCodeId: deviceCodeRecord.id });
       const callbackUri = buildCallbackUrl(request);
 
-      const githubAuthUrl = new URL("https://github.com/login/oauth/authorize");
+      const githubAuthUrl = new URL(`${config.github.url}/login/oauth/authorize`);
       githubAuthUrl.searchParams.set("client_id", config.github.clientId);
       githubAuthUrl.searchParams.set("redirect_uri", callbackUri);
       githubAuthUrl.searchParams.set("scope", "read:user user:email read:org");
@@ -1022,7 +1022,7 @@ function renderErrorPage(title: string, message: string): string {
     <h1>${title}</h1>
     <p>${message}</p>
     <div class="help-link">
-      <a href="https://keyway.sh">Return to Keyway</a>
+      <a href="${config.app.frontendUrl}">Return to Keyway</a>
     </div>
   </div>
 </body>

@@ -3,6 +3,8 @@
  * https://datatracker.ietf.org/doc/html/rfc7807
  */
 
+import { config } from "../config";
+
 export interface ProblemDetails {
   type: string;
   title: string;
@@ -19,7 +21,7 @@ export interface FieldError {
   message: string;
 }
 
-const ERROR_BASE_URL = "https://api.keyway.sh/errors";
+const ERROR_BASE_URL = config.errors?.baseUrl || "https://api.keyway.sh/errors";
 
 /**
  * Base class for RFC 7807 compliant errors
@@ -247,7 +249,9 @@ export class PlanLimitError extends ApiError {
 
   constructor(
     detail: string,
-    upgradeUrl = "https://keyway.sh/upgrade",
+    upgradeUrl = process.env.FRONTEND_URL
+      ? `${process.env.FRONTEND_URL}/upgrade`
+      : "https://keyway.sh/upgrade",
     trialInfo?: TrialEligibilityInfo
   ) {
     super({

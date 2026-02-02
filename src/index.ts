@@ -39,7 +39,7 @@ fastify.register(helmet, {
           fontSrc: ["'self'"],
           objectSrc: ["'none'"],
           frameAncestors: ["'none'"],
-          formAction: ["'self'", "https://github.com"],
+          formAction: ["'self'", config.github.url],
           upgradeInsecureRequests: [],
         },
       }
@@ -47,8 +47,8 @@ fastify.register(helmet, {
 });
 
 fastify.register(rateLimit, {
-  max: 100, // 100 requests
-  timeWindow: "15 minutes", // per 15 minutes
+  max: config.rateLimit.max,
+  timeWindow: config.rateLimit.window,
   addHeadersOnExceeding: {
     "x-ratelimit-limit": true,
     "x-ratelimit-remaining": true,
@@ -236,7 +236,7 @@ fastify.setErrorHandler(
     // Handle rate limit errors (from @fastify/rate-limit plugin)
     if (error.statusCode === 429) {
       return reply.status(429).send({
-        type: "https://api.keyway.sh/errors/rate-limited",
+        type: `${config.errors.baseUrl}/rate-limited`,
         title: "Too Many Requests",
         status: 429,
         detail: "Too many requests, please try again later",
@@ -246,7 +246,7 @@ fastify.setErrorHandler(
 
     // Default to 500 Internal Server Error (RFC 7807 format)
     return reply.status(statusCode).send({
-      type: "https://api.keyway.sh/errors/internal-error",
+      type: `${config.errors.baseUrl}/internal-error`,
       title: "Internal Server Error",
       status: statusCode,
       detail: config.server.isProduction ? "An unexpected error occurred" : error.message,

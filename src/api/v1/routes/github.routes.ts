@@ -244,7 +244,7 @@ export async function githubRoutes(fastify: FastifyInstance) {
     try {
       // Utiliser le token d'installation pour récupérer les IDs du repo
       const token = await getInstallationToken(installation.installationId);
-      const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      const response = await fetch(`${config.github.apiBaseUrl}/repos/${owner}/${repo}`, {
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: "application/vnd.github.v3+json",

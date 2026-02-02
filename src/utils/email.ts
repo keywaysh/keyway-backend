@@ -78,7 +78,7 @@ keyway push</pre>
 
   <p style="color: #a0aec0; font-size: 12px; text-align: center;">
     Keyway - GitHub-native secrets management<br>
-    <a href="https://keyway.sh" style="color: #a0aec0;">keyway.sh</a> · <a href="https://docs.keyway.sh" style="color: #a0aec0;">docs.keyway.sh</a>
+    <a href="${config.app.frontendUrl}" style="color: #a0aec0;">${new URL(config.app.frontendUrl).hostname}</a> · <a href="${config.app.docsUrl}" style="color: #a0aec0;">${new URL(config.app.docsUrl).hostname}</a>
   </p>
 </body>
 </html>
@@ -112,7 +112,7 @@ Nicolas
 
 ---
 Keyway - GitHub-native secrets management
-https://keyway.sh | https://docs.keyway.sh
+${config.app.frontendUrl} | ${config.app.docsUrl}
 `;
 }
 
@@ -242,7 +242,7 @@ function getSecurityAlertEmailHtml(params: SecurityAlertEmailParams): string {
 
   <p style="color: #a0aec0; font-size: 12px; text-align: center;">
     Keyway - GitHub-native secrets management<br>
-    <a href="https://keyway.sh" style="color: #a0aec0;">keyway.sh</a> · <a href="https://docs.keyway.sh" style="color: #a0aec0;">docs.keyway.sh</a>
+    <a href="${config.app.frontendUrl}" style="color: #a0aec0;">${new URL(config.app.frontendUrl).hostname}</a> · <a href="${config.app.docsUrl}" style="color: #a0aec0;">${new URL(config.app.docsUrl).hostname}</a>
   </p>
 </body>
 </html>
@@ -280,7 +280,7 @@ ${config.app.dashboardUrl}/security#alerts
 
 ---
 Keyway - GitHub-native secrets management
-https://keyway.sh | https://docs.keyway.sh
+${config.app.frontendUrl} | ${config.app.docsUrl}
 `;
 }
 
@@ -381,7 +381,7 @@ function getTrialStartedEmailHtml(params: TrialStartedEmailParams): string {
 
   <p style="color: #a0aec0; font-size: 12px; text-align: center;">
     Keyway - GitHub-native secrets management<br>
-    <a href="https://keyway.sh" style="color: #a0aec0;">keyway.sh</a> · <a href="https://docs.keyway.sh" style="color: #a0aec0;">docs.keyway.sh</a>
+    <a href="${config.app.frontendUrl}" style="color: #a0aec0;">${new URL(config.app.frontendUrl).hostname}</a> · <a href="${config.app.docsUrl}" style="color: #a0aec0;">${new URL(config.app.docsUrl).hostname}</a>
   </p>
 </body>
 </html>
@@ -422,6 +422,6 @@ Nicolas
 
 ---
 Keyway - GitHub-native secrets management
-https://keyway.sh | https://docs.keyway.sh
+${config.app.frontendUrl} | ${config.app.docsUrl}
 `;
 }

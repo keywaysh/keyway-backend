@@ -12,6 +12,12 @@ if (fs.existsSync(envLocalPath)) {
   dotenv.config();
 }
 
+// Helper: treat empty strings as undefined (handles Docker Compose empty defaults like ${VAR:-})
+const emptyToUndefined = (v: unknown) => (v === "" ? undefined : v);
+
+// Optional URL field that accepts empty strings gracefully
+const optionalUrl = () => z.preprocess(emptyToUndefined, z.string().url().optional());
+
 // Environment schema with validation
 const envSchema = z
   .object({
@@ -40,7 +46,10 @@ const envSchema = z
 
     // Analytics
     POSTHOG_API_KEY: z.string().optional(),
-    POSTHOG_HOST: z.string().url().default("https://app.posthog.com"),
+    POSTHOG_HOST: z.preprocess(
+      emptyToUndefined,
+      z.string().url().default("https://app.posthog.com")
+    ),
 
     // CORS
     ALLOWED_ORIGINS: z
@@ -71,25 +80,25 @@ const envSchema = z
     STRIPE_PRICE_STARTUP_YEARLY: z.string().optional(),
 
     // Frontend URLs (for redirects after auth)
-    FRONTEND_URL: z.string().url().optional(), // Landing page (marketing)
-    DASHBOARD_URL: z.string().url().optional(), // Dashboard app
+    FRONTEND_URL: optionalUrl(), // Landing page (marketing)
+    DASHBOARD_URL: optionalUrl(), // Dashboard app
 
     // Sentry Error Tracking (optional)
-    SENTRY_DSN: z.string().url().optional(),
+    SENTRY_DSN: optionalUrl(),
     SENTRY_RELEASE: z.string().optional(),
 
     // Self-hosting config
-    DOCS_URL: z.string().url().optional(),
-    ERROR_BASE_URL: z.string().url().optional(),
+    DOCS_URL: optionalUrl(),
+    ERROR_BASE_URL: optionalUrl(),
     EMAIL_FROM_ADDRESS: z.string().optional(),
     EMAIL_FROM_NAME: z.string().optional(),
     BILLING_ENABLED: z
       .string()
       .optional()
       .transform((val) => val !== "false"), // defaults to true
-    GITHUB_BASE_URL: z.string().url().optional(), // GitHub API URL (e.g., https://api.github.com or https://github.example.com/api/v3)
-    GITHUB_URL: z.string().url().optional(), // GitHub web URL for OAuth (e.g., https://github.com or https://github.example.com)
-    GITHUB_APP_INSTALL_URL: z.string().url().optional(),
+    GITHUB_BASE_URL: optionalUrl(), // GitHub API URL (e.g., https://api.github.com or https://github.example.com/api/v3)
+    GITHUB_URL: optionalUrl(), // GitHub web URL for OAuth (e.g., https://github.com or https://github.example.com)
+    GITHUB_APP_INSTALL_URL: optionalUrl(),
 
     // Rate limiting
     RATE_LIMIT_MAX: z

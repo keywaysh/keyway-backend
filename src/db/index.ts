@@ -12,8 +12,12 @@ if (!process.env.DATABASE_URL) {
 
 const connectionString = process.env.DATABASE_URL;
 
-// Create postgres connection
-export const sql = postgres(connectionString);
+// Create postgres connection with pool configuration
+export const sql = postgres(connectionString, {
+  max: parseInt(process.env.DB_POOL_MAX || "20"),
+  idle_timeout: 20,
+  connect_timeout: 10,
+});
 
 // Create drizzle instance
 export const db = drizzle(sql, { schema });

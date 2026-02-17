@@ -42,7 +42,7 @@
     "@fastify/formbody": "^8.0.2",
     "@fastify/helmet": "^13.0.2",
     "@fastify/rate-limit": "10.3.0",
-    "@grpc/grpc-js": "^1.14.1",
+    "@grpc/grpc-js": "^1.14.3",
     "@grpc/proto-loader": "^0.8.0",
     "@sentry/node": "^10.30.0",
     "dotenv": "^16.3.1",
